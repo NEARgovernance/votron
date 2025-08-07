@@ -1,21 +1,18 @@
-# Shade Agent Template
+# Votron: Autonomous Proposal Reviewer
 
-> [!WARNING]  
+> [!WARNING]
 > This technology has not yet undergone a formal audit. Please conduct your own due diligence and exercise caution before integrating or relying on it in production environments.
 
-This is a simple template for the Shade Agent Framework with all the code and tools required for deploying a Shade Agent on NEAR and Phala Cloud.
+This proof-of-concept demo is built using the [Shade Agent framework](https://docs.near.org/ai/shade-agents/introduction).
 
-This template is a simple verifiable ETH Price Oracle that pushes prices to an Ethereum contract.
-
-For full instructions on this repository please refer to our [docs](https://docs.near.org/ai/shade-agents/sandbox/sandbox-deploying).
+It is an example of a NEAR AI agent that monitors House of Stake voting contracts and screens proposals based on simple criteria.
 
 ## Prerequisites
 
-- First, `clone` this template.
+- First, clone this repo:
 
 ```bash
-git clone https://github.com/NearDeFi/shade-agent-sandbox-template shade-agent
-cd shade-agent
+git clone https://github.com/NearDeFi/votron && cd votron
 ```
 
 - Install NEAR and Shade Agent tooling:
@@ -28,15 +25,13 @@ curl --proto '=https' --tlsv1.2 -LsSf https://github.com/near/near-cli-rs/releas
 npm i -g @neardefi/shade-agent-cli
 ```
 
-- Create a `NEAR testnet account` and record the account name and `seed phrase`:
+- Create a `NEAR testnet account` then record the account name and `seed phrase`:
 
 ```bash
 near account create-account sponsor-by-faucet-service <example-name.testnet> autogenerate-new-keypair print-to-terminal network-config testnet create
 ```
 
-replacing <example-name.testnet> with a unique name.
-
-- Set up docker if you have not already:
+- Set up Docker, if you have not already.
 
 Install Docker for [Mac](https://docs.docker.com/desktop/setup/install/mac-install/) or [Linux](https://docs.docker.com/desktop/setup/install/linux/) and set up an account.
 
@@ -50,13 +45,13 @@ Phala Cloud is a service that offers secure and private hosting in a TEE using [
 
 ---
 
-## Set up
+## Getting Started
 
 - Rename the `.env.development.local.example` file name to `.env.development.local` and configure your environment variables.
 
 - Start up Docker:
 
-For Mac
+### Mac
 
 Simply open the Docker Desktop application or run:
 
@@ -64,13 +59,13 @@ Simply open the Docker Desktop application or run:
 open -a Docker
 ```
 
-For Linux
+### Linux
 
 ```bash
 sudo systemctl start docker
 ```
 
-- Install dependencies 
+- Install dependencies
 
 ```bash
 npm i
@@ -78,7 +73,7 @@ npm i
 
 ---
 
-## Local development
+## Local Development
 
 - Make sure the `NEXT_PUBLIC_contractId` prefix is set to `ac.proxy.` followed by your NEAR accountId.
 
@@ -96,15 +91,15 @@ The CLI on Linux may prompt you to enter your `sudo password`.
 npm run dev
 ```
 
-Your app will start on https://localhost:3000
+Your app will start here: https://localhost:3000
 
 ---
 
 ## TEE Deployment
 
-- Change the `NEXT_PUBLIC_contractId` prefix to `ac.sandbox.` followed by your NEAR accountId.
+1. Change the `NEXT_PUBLIC_contractId` prefix to `ac.sandbox.` followed by your NEAR accountId.
 
-- Run the Shade Agent CLI
+2. Run the Shade Agent CLI
 
 ```bash
 shade-agent-cli
@@ -114,7 +109,7 @@ The CLI on Linux may prompt you to enter your `sudo password`.
 
 The last URL the CLI outputs is where your app is hosted.
 
-If your application is not working head over to your App on Phala Dashboard and review the logs.
+If your application is not working, head over to your App on Phala Dashboard and review the logs.
 
 ## Interacting with the Agent
 
@@ -122,29 +117,11 @@ You can interact with your agent via the APIs directly or via a lightweight fron
 
 ### Direct
 
-For Phala deployments swap localhost:3000 for your deployment URL
+For Phala deployments, swap localhost:3000 for your deployment URL.
 
-Get the Agent account and it's balance:
+### Testing
 
-```
-https://localhost:3000/api/agent-account
-```
-
-Get the derived Ethereum Sepolia account and it's balance (you will need to fund this):
-
-```
-https://localhost:3000/api/eth-account
-```
-
-Send a transaction through the Agent to update the price of Eth:
-
-```
-https://localhost:3000/api/transaction
-```
-
-### Frontend
-
-To run the frontend run:
+To see the agent in action:
 
 ```bash
 cd frontend
@@ -152,4 +129,4 @@ npm i
 npm run dev
 ```
 
-To run the frontend with your Phala deployment change the `API_URL` to Phala URL in your [config.js](./frontend/src/config.js) file.
+To run the frontend with your Phala deployment, change the `API_URL` to Phala URL in your [config.js](./frontend/src/config.js) file.

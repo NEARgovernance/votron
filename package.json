@@ -14,16 +14,19 @@
     "phala:deploy": "phala cvms create --name my-app --vcpu 1 --compose ./docker-compose.yaml --env-file ./.env.development.local"
   },
   "dependencies": {
+    "@fastnear/api": "^0.9.7",
     "@hono/node-server": "^1.15.0",
     "@neardefi/shade-agent-js": "^1.0.0",
     "chainsig.js": "^1.1.9",
     "cors": "^2.8.5",
     "dotenv": "^16.5.0",
     "ethers": "^6.11.1",
-    "hono": "^4.8.4"
+    "hono": "^4.8.4",
+    "ws": "^8.18.3"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
+    "@types/ws": "^8.18.1",
     "tsx": "^4.0.0",
     "typescript": "^5.0.0"
   }

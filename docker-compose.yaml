@@ -21,7 +21,7 @@ services:
       NEXT_PUBLIC_contractId: ${NEXT_PUBLIC_contractId}
     platform: linux/amd64 # Explicitly set for TDX
     # shade-agent-app-image
-    image: pivortex/my-app@sha256:af0c4432864489eb8c6650a6dc61f03ef831240a4199e602cd4d6bd8f4d7163f
+    image: jwaup/votron@sha256:ca318b58abdcb55ca027b8d7b10a3401574be1da9c1f8ac107d6b6aa5b040bfb
     container_name: shade-agent-app
     ports:
       - "3000:3000"
