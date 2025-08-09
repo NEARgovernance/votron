@@ -4,9 +4,16 @@ import { cors } from "hono/cors";
 import dotenv from "dotenv";
 import WebSocket from "ws";
 
-if (process.env.NODE_ENV !== "production") {
+try {
   dotenv.config({ path: ".env.development.local" });
+} catch (e) {
+  console.log("No local env file found, using system environment");
 }
+
+console.log("🔍 Environment check:");
+console.log("NODE_ENV:", process.env.NODE_ENV);
+console.log("ANTHROPIC_API_KEY exists:", !!process.env.ANTHROPIC_API_KEY);
+console.log("AGENT_ACCOUNT_ID:", process.env.AGENT_ACCOUNT_ID);
 
 // Import routes
 import { ProposalScreener } from "./proposalScreener";
@@ -17,15 +24,15 @@ import { agent, agentAccountId } from "@neardefi/shade-agent-js";
 // House of Stake config
 const VOTING_CONTRACT_ID =
   process.env.VOTING_CONTRACT_ID || "shade.ballotbox.testnet";
-const NEAR_RPC_URL = process.env.NEAR_RPC_URL || "https://rpc.testnet.near.org";
+const NEAR_RPC_JSON =
+  process.env.NEAR_RPC_JSON || "https://rpc.testnet.near.org";
 
-// Initialize proposal screener with default criteria
 const proposalScreener = new ProposalScreener({
   trustedProposers: [],
   blockedProposers: [],
   apiKey: process.env.ANTHROPIC_API_KEY,
-  agentAccountId: process.env.AGENT_ACCOUNT_ID,
-  votingContractId: VOTING_CONTRACT_ID,
+  agentAccountId: "ac-sandbox.votron.testnet",
+  votingContractId: "shade.ballotbox.testnet",
 });
 
 // Event stream client for NEAR proposal monitoring
@@ -71,6 +78,19 @@ app.get("/api/debug/websocket-status", (c) => {
     reconnectAttempts: reconnectAttempts,
     votingContract: VOTING_CONTRACT_ID,
     maxReconnectAttempts: maxReconnectAttempts,
+  });
+});
+
+app.get("/debug/env", (c) => {
+  return c.json({
+    nodeEnv: process.env.NODE_ENV,
+    hasAnthropicKey: !!process.env.ANTHROPIC_API_KEY,
+    anthropicKeyLength: process.env.ANTHROPIC_API_KEY?.length || 0,
+    agentAccountId: process.env.AGENT_ACCOUNT_ID,
+    allAnthropicKeys: Object.keys(process.env).filter((k) =>
+      k.toLowerCase().includes("anthropic")
+    ),
+    envKeysCount: Object.keys(process.env).length,
   });
 });
 
@@ -207,7 +227,7 @@ async function fetchProposal(
   };
 
   const res = await fetchWithTimeout(
-    NEAR_RPC_URL,
+    NEAR_RPC_JSON,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
