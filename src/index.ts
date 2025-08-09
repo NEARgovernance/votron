@@ -4,62 +4,36 @@ import { cors } from "hono/cors";
 import dotenv from "dotenv";
 import WebSocket from "ws";
 
-// Load environment variables from .env file (only needed for local development)
 if (process.env.NODE_ENV !== "production") {
   dotenv.config({ path: ".env.development.local" });
 }
 
-// Import existing routes
-import agentAccount from "./routes/agentAccount";
-
-// Import simple proposal screener
+// Import routes
 import { ProposalScreener } from "./proposalScreener";
 import createScreenerRoutes from "./routes/proposalScreener";
 
 import { agent, agentAccountId } from "@neardefi/shade-agent-js";
 
-// NEAR monitoring configuration
-const VOTING_CONTRACT = process.env.VOTING_CONTRACT;
+// House of Stake config
+const VOTING_CONTRACT_ID =
+  process.env.VOTING_CONTRACT_ID || "shade.ballotbox.testnet";
 const NEAR_RPC_URL = process.env.NEAR_RPC_URL || "https://rpc.testnet.near.org";
 
-// 🛡️ Initialize proposal screener with default criteria
+// Initialize proposal screener with default criteria
 const proposalScreener = new ProposalScreener({
   trustedProposers: [],
   blockedProposers: [],
   apiKey: process.env.ANTHROPIC_API_KEY,
   agentAccountId: process.env.AGENT_ACCOUNT_ID,
-  votingContractId: process.env.VOTING_CONTRACT,
+  votingContractId: VOTING_CONTRACT_ID,
 });
-
-console.log("🔍 Environment Variables Check:");
-console.log(
-  "ANTHROPIC_API_KEY:",
-  process.env.ANTHROPIC_API_KEY
-    ? process.env.ANTHROPIC_API_KEY.substring(0, 8) +
-        "..." +
-        process.env.ANTHROPIC_API_KEY.substring(
-          process.env.ANTHROPIC_API_KEY.length - 4
-        )
-    : "❌ NOT SET"
-);
-console.log("NEAR_ACCOUNT_ID:", process.env.NEAR_ACCOUNT_ID || "❌ NOT SET");
-console.log("AGENT_ACCOUNT_ID:", process.env.AGENT_ACCOUNT_ID || "❌ NOT SET");
-console.log("VOTING_CONTRACT:", process.env.VOTING_CONTRACT || "❌ NOT SET");
 
 // Event stream client for NEAR proposal monitoring
 let eventClient: WebSocket | null = null;
 let isConnecting = false;
 let reconnectAttempts = 0;
+``;
 const maxReconnectAttempts = 5;
-
-if (VOTING_CONTRACT) {
-  console.log("🛡️ Proposal screener initialized");
-  console.log(`📋 Monitoring contract: ${VOTING_CONTRACT}`);
-} else {
-  console.log(
-    "🛡️ Proposal screener initialized (monitoring disabled - no VOTING_CONTRACT)"
-  );
-}
 
 const app = new Hono();
 
@@ -73,7 +47,7 @@ app.get("/", (c) => {
   return c.json({
     message: "App is running",
     shadeAgent: "active",
-    proposalScreener: VOTING_CONTRACT ? "active" : "disabled",
+    proposalScreener: "active",
     timestamp: new Date().toISOString(),
     uptime: Math.floor(process.uptime()),
     eventStream: eventClient ? "connected" : "disconnected",
@@ -87,7 +61,6 @@ app.get("/", (c) => {
 });
 
 // Shade Agent routes
-app.route("/api/agent-account", agentAccount);
 app.route("/api/screener", createScreenerRoutes(proposalScreener));
 app.route("/api/agent", createShadeAgentApiRoutes());
 
@@ -96,7 +69,7 @@ app.get("/api/debug/websocket-status", (c) => {
     connected: !!eventClient,
     isConnecting: isConnecting,
     reconnectAttempts: reconnectAttempts,
-    votingContract: VOTING_CONTRACT,
+    votingContract: VOTING_CONTRACT_ID,
     maxReconnectAttempts: maxReconnectAttempts,
   });
 });
@@ -104,7 +77,6 @@ app.get("/api/debug/websocket-status", (c) => {
 function createShadeAgentApiRoutes() {
   const agentApiRoutes = new Hono();
 
-  // The routes that shade-agent-js expects to find
   agentApiRoutes.post("/getAccountId", async (c) => {
     try {
       console.log("🔧 shade-agent-js requesting getAccountId");
@@ -226,7 +198,7 @@ async function fetchProposal(
     params: {
       request_type: "call_function",
       finality: "final",
-      account_id: VOTING_CONTRACT,
+      account_id: VOTING_CONTRACT_ID,
       method_name: "get_proposal",
       args_base64: Buffer.from(JSON.stringify({ proposal_id: id })).toString(
         "base64"
@@ -297,11 +269,6 @@ async function handleNewProposal(proposalId: string, eventDetails: any) {
       ...proposal,
     });
 
-    const emoji = {
-      approve: "✅",
-      reject: "❌",
-    }[screeningResult.decision];
-
     console.log(`\n📋 NEW PROPOSAL DETECTED:`);
     console.log(`📝 Title: ${title}`);
     console.log(`👤 Proposer: ${proposer_id || "Unknown"}`);
@@ -310,11 +277,7 @@ async function handleNewProposal(proposalId: string, eventDetails: any) {
         description.length > 150 ? "..." : ""
       }`
     );
-    console.log(
-      `🛡️ Screening Result: ${emoji} ${screeningResult.decision.toUpperCase()}`
-    );
     console.log(`📋 Reasons: ${screeningResult.reasons.join(" | ")}`);
-    console.log(`🔗 View: https://near.vote/proposal/${proposalId}\n`);
   } catch (error: any) {
     console.error(
       `❌ Failed to process new proposal ${proposalId}:`,
@@ -331,18 +294,8 @@ async function handleProposalApproval(proposalId: string, eventDetails: any) {
     const existingResult = proposalScreener.getScreeningResult(proposalId);
 
     if (existingResult) {
-      const emoji = {
-        approve: "✅",
-        reject: "❌",
-      }[existingResult.decision];
-
-      console.log(`\n🗳️ PROPOSAL APPROVED FOR VOTING:`);
-      console.log(`📝 Proposal ${proposalId}`);
-      console.log(
-        `🛡️ Previous Screening: ${emoji} ${existingResult.decision.toUpperCase()}`
-      );
+      console.log(`\n🗳️ PROPOSAL ${proposalId} APPROVED FOR VOTING:`);
       console.log(`📋 Reasons: ${existingResult.reasons.join(" | ")}`);
-      console.log(`🔗 Vote: https://near.vote/proposal/${proposalId}\n`);
     } else {
       // Screen it now if we haven't seen it before
       let proposal: ProposalData | null = null;
@@ -392,8 +345,8 @@ function extractProposalDetails(event: any) {
 
 // Start blockchain event monitoring
 async function startEventStream() {
-  if (!VOTING_CONTRACT) {
-    console.log("⚠️ VOTING_CONTRACT not set - skipping proposal monitoring");
+  if (!VOTING_CONTRACT_ID) {
+    console.log("⚠️ VOTING_CONTRACT_ID not set - skipping proposal monitoring");
     return;
   }
 
@@ -420,7 +373,7 @@ async function startEventStream() {
       const contractFilter = {
         And: [
           { path: "event_standard", operator: { Equals: "venear" } },
-          { path: "account_id", operator: { Equals: VOTING_CONTRACT } },
+          { path: "account_id", operator: { Equals: VOTING_CONTRACT_ID } },
         ],
       };
 
@@ -459,7 +412,7 @@ async function startEventStream() {
             `📋 Event details: type=${eventType}, proposalId=${proposalId}, account=${accountId}`
           );
 
-          if (accountId && accountId !== VOTING_CONTRACT) {
+          if (accountId && accountId !== VOTING_CONTRACT_ID) {
             console.log(
               `⏩ Skipping event from different contract: ${accountId}`
             );
@@ -531,14 +484,13 @@ async function startEventStream() {
 // Start the server
 const port = Number(process.env.PORT || "3000");
 
-console.log(`🚀 Starting Enhanced Shade Agent with Proposal Screening`);
-console.log(`🌐 App is running on port ${port}`);
+console.log(`🚀 Starting Proposal Reviewer Agent`);
 
 // Start proposal monitoring after a short delay to ensure server is ready
-if (VOTING_CONTRACT) {
+if (VOTING_CONTRACT_ID) {
   setTimeout(() => {
     console.log(
-      `📋 Starting NEAR proposal monitoring for ${VOTING_CONTRACT}...`
+      `📋 Starting NEAR proposal monitoring for ${VOTING_CONTRACT_ID}...`
     );
     startEventStream();
   }, 2000);

@@ -6,18 +6,19 @@ interface ScreeningCriteria {
   apiKey?: string;
   agentAccountId?: string;
   votingContractId?: string;
+  customContractId?: string;
 }
 
 interface ScreeningResult {
   proposalId: string;
-  decision: "approve" | "reject";
+  approved: boolean;
   reasons: string[];
   timestamp: string;
   executionResult?: ExecutionResult;
 }
 
 interface ExecutionResult {
-  action: "approved" | "rejected" | "failed";
+  action: "approved" | "failed";
   transactionHash?: string;
   timestamp: string;
   error?: string;
@@ -38,6 +39,7 @@ export class ProposalScreener {
   public autonomousMode: boolean;
   public agentAccountId?: string;
   public votingContractId?: string;
+  public customContractId?: string;
 
   constructor(initialCriteria: ScreeningCriteria = {}) {
     this.criteria = {
@@ -49,28 +51,24 @@ export class ProposalScreener {
     this.agentAccountId =
       initialCriteria.agentAccountId || process.env.AGENT_ACCOUNT_ID;
     this.votingContractId =
-      initialCriteria.votingContractId || process.env.VOTING_CONTRACT;
+      initialCriteria.votingContractId ||
+      process.env.VOTING_CONTRACT_ID ||
+      "shade.ballotbox.testnet";
+    this.customContractId = process.env.CUSTOM_CONTRACT_ID;
     this.autonomousMode = !!(this.agentAccountId && this.votingContractId);
     this.screeningHistory = new Map();
 
-    // Check if Anthropic API key is available
-    const hasApiKey = !!(
-      initialCriteria.apiKey || process.env.ANTHROPIC_API_KEY
+    console.log(
+      `🛡️ AI Proposal screener initialized (Anthropic ${
+        this.criteria.apiKey ? "✅" : "❌"
+      })`
     );
 
     if (this.autonomousMode) {
       console.log("🤖 AUTONOMOUS DAO GOVERNANCE ACTIVE");
       console.log(`🔑 Agent account: ${this.agentAccountId}`);
       console.log(`📋 Voting contract: ${this.votingContractId}`);
-    } else {
-      console.log("🤖 Screening mode only - autonomous execution disabled");
     }
-
-    console.log(
-      `🛡️ AI Proposal screener initialized (Anthropic ${
-        hasApiKey ? "✅" : "❌"
-      })`
-    );
   }
 
   updateCriteria(newCriteria: Partial<ScreeningCriteria>) {
@@ -88,7 +86,7 @@ export class ProposalScreener {
   ): Promise<ScreeningResult> {
     const id = proposalId.toString();
     let reasons: string[] = [];
-    let decision: "approve" | "reject" = "reject";
+    let approved: boolean = false;
 
     console.log(`🔍 AI Screening proposal ${id}: "${proposal.title}"`);
 
@@ -98,9 +96,9 @@ export class ProposalScreener {
         proposal.proposer_id &&
         this.criteria.blockedProposers?.includes(proposal.proposer_id)
       ) {
-        decision = "reject";
+        approved = false;
         reasons = [`❌ Blocked proposer: ${proposal.proposer_id}`];
-        const result = this.saveResult(id, decision, reasons);
+        const result = this.saveResult(id, approved, reasons);
         return await this.executeIfAutonomous(result);
       }
 
@@ -109,38 +107,43 @@ export class ProposalScreener {
         proposal.proposer_id &&
         this.criteria.trustedProposers?.includes(proposal.proposer_id)
       ) {
-        decision = "approve";
+        approved = true;
         reasons = [`✅ Trusted proposer: ${proposal.proposer_id}`];
-        const result = this.saveResult(id, decision, reasons);
+        const result = this.saveResult(id, approved, reasons);
         return await this.executeIfAutonomous(result);
       }
 
       // 3. ASK AI FOR DECISION
       const aiDecision = await this.askAI(proposal);
-      decision = aiDecision.decision;
+      approved = aiDecision.approved;
       reasons = aiDecision.reasons;
 
-      const result = this.saveResult(id, decision, reasons);
+      const result = this.saveResult(id, approved, reasons);
       return await this.executeIfAutonomous(result);
     } catch (error: any) {
       console.error(`❌ AI Screening failed for proposal ${id}:`, error);
-      return this.saveResult(id, "reject", [
+      return this.saveResult(id, false, [
         `❌ AI screening error: ${error.message}`,
       ]);
     }
   }
 
   private async askAI(proposal: ProposalData): Promise<{
-    decision: "approve" | "reject";
+    approved: boolean;
     reasons: string[];
   }> {
-    const apiKey = this.criteria.apiKey || process.env.ANTHROPIC_API_KEY;
+    console.log(
+      "🧪 ANTHROPIC_API_KEY exists:",
+      !!process.env.ANTHROPIC_API_KEY
+    );
+
+    const apiKey = process.env.ANTHROPIC_API_KEY;
 
     if (!apiKey) {
+      console.error(`❌ No Anthropic API key found in environment`);
+      console.error(`❌ All env keys:`, Object.keys(process.env).slice(0, 10));
       throw new Error("No Anthropic API key configured");
     }
-
-    // Replace the prompt in your askAI method with this:
 
     const prompt = `You are screening NEAR DAO proposals. APPROVE legitimate proposals for voting, REJECT clear spam/scams.
 
@@ -171,6 +174,9 @@ Respond ONLY with JSON:
 
     try {
       console.log(`🤖 Sending proposal to Claude for screening...`);
+      console.log(
+        `🔗 Using API endpoint: https://api.anthropic.com/v1/messages`
+      );
 
       const response = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
@@ -180,7 +186,7 @@ Respond ONLY with JSON:
           "anthropic-version": "2023-06-01",
         },
         body: JSON.stringify({
-          model: "claude-3-5-sonnet-20241022", // Updated model
+          model: "claude-3-5-sonnet-20241022",
           max_tokens: 200,
           messages: [
             {
@@ -191,31 +197,57 @@ Respond ONLY with JSON:
         }),
       });
 
+      console.log(`📡 Anthropic API response status: ${response.status}`);
+
       if (!response.ok) {
-        const errorData = await response.json();
-        console.error(`🤖 Anthropic API Error:`, errorData);
+        const errorText = await response.text();
+        console.error(`🤖 Anthropic API Error ${response.status}:`, errorText);
+
+        // Try to parse error details
+        try {
+          const errorData = JSON.parse(errorText);
+          console.error(`🤖 Parsed error:`, errorData);
+        } catch {
+          console.error(`🤖 Raw error:`, errorText);
+        }
+
         throw new Error(
-          `Anthropic API error: ${response.status} ${response.statusText}`
+          `Anthropic API error: ${response.status} ${
+            response.statusText
+          } - ${errorText.substring(0, 200)}`
         );
       }
 
       const data = await response.json();
-      const aiResponse = data.content[0].text;
+      console.log(`🤖 Claude response data:`, data);
 
-      console.log(`🤖 Claude response:`, aiResponse);
+      const aiResponse = data.content[0].text;
+      console.log(`🤖 Claude response text:`, aiResponse);
 
       return this.parseAIResponse(aiResponse);
     } catch (error: any) {
       console.error("🤖 AI API call failed:", error);
-      return {
-        decision: "reject",
-        reasons: [`🤖 AI screening failed: ${error.message}`],
-      };
+
+      // More specific error handling
+      if (error.message.includes("401")) {
+        throw new Error(`Invalid Anthropic API key`);
+      } else if (error.message.includes("429")) {
+        throw new Error(`Anthropic API rate limit exceeded`);
+      } else if (
+        error.message.includes("network") ||
+        error.message.includes("fetch")
+      ) {
+        throw new Error(
+          `Network error connecting to Anthropic API: ${error.message}`
+        );
+      } else {
+        throw new Error(`AI screening failed: ${error.message}`);
+      }
     }
   }
 
   private parseAIResponse(response: string): {
-    decision: "approve" | "reject";
+    approved: boolean;
     reasons: string[];
   } {
     try {
@@ -224,7 +256,7 @@ Respond ONLY with JSON:
       if (jsonMatch) {
         const parsed = JSON.parse(jsonMatch[0]);
         return {
-          decision: parsed.decision === "approve" ? "approve" : "reject",
+          approved: parsed.decision === "approve",
           reasons: Array.isArray(parsed.reasons)
             ? parsed.reasons
             : ["AI provided decision"],
@@ -234,14 +266,39 @@ Respond ONLY with JSON:
       // Fallback: look for approve/reject in text
       const isApprove = response.toLowerCase().includes("approve");
       return {
-        decision: isApprove ? "approve" : "reject",
+        approved: isApprove,
         reasons: [`AI decision: ${isApprove ? "approve" : "reject"}`],
       };
     } catch (error) {
       return {
-        decision: "reject",
+        approved: false,
         reasons: ["Failed to parse AI response"],
       };
+    }
+  }
+
+  shouldExecuteAction(screeningResult: ScreeningResult): boolean {
+    return screeningResult.approved;
+  }
+
+  private async executeDecision(
+    proposalId: string,
+    screeningResult: ScreeningResult
+  ): Promise<ExecutionResult | null> {
+    if (!this.agentAccountId || !this.votingContractId) {
+      throw new Error("Agent account or voting contract not configured");
+    }
+
+    const { approved } = screeningResult;
+
+    if (approved) {
+      console.log(
+        `🤖 Executing autonomous APPROVAL for proposal ${proposalId}`
+      );
+      return await this.approveProposal(proposalId);
+    } else {
+      console.log(`🤖 Proposal ${proposalId} not approved - no action taken`);
+      return null;
     }
   }
 
@@ -254,8 +311,22 @@ Respond ONLY with JSON:
           result.proposalId,
           result
         );
-        result.executionResult = executionResult;
-        result.reasons.push(`🤖 Autonomous action: ${executionResult.action}`);
+
+        if (executionResult) {
+          result.executionResult = executionResult;
+          result.reasons.push(
+            `🤖 Autonomous action: ${executionResult.action}`
+          );
+          console.log(
+            `✅ Autonomous execution completed for proposal ${result.proposalId}`
+          );
+        } else {
+          console.log(
+            `⏸️ No autonomous action taken for proposal ${result.proposalId}`
+          );
+          result.reasons.push(`⏸️ No action taken - proposal not approved`);
+        }
+
         this.screeningHistory.set(result.proposalId, result);
       } catch (error: any) {
         console.error(`❌ Failed to execute autonomous action:`, error);
@@ -271,40 +342,13 @@ Respond ONLY with JSON:
     return result;
   }
 
-  shouldExecuteAction(screeningResult: ScreeningResult): boolean {
-    // Execute all approve/reject decisions autonomously
-    return true;
-  }
-
-  private async executeDecision(
-    proposalId: string,
-    screeningResult: ScreeningResult
-  ): Promise<ExecutionResult> {
-    if (!this.agentAccountId || !this.votingContractId) {
-      throw new Error("Agent account or voting contract not configured");
-    }
-
-    const { decision } = screeningResult;
-    console.log(
-      `🤖 Executing autonomous decision: ${decision.toUpperCase()} for proposal ${proposalId}`
-    );
-
-    if (decision === "approve") {
-      return await this.approveProposal(proposalId);
-    } else if (decision === "reject") {
-      return await this.rejectProposal(proposalId);
-    } else {
-      throw new Error(`Cannot execute decision: ${decision}`);
-    }
-  }
-
   async approveProposal(proposalId: string): Promise<ExecutionResult> {
     console.log(`✅ Auto-approving proposal ${proposalId}...`);
 
     try {
       const teeUrl =
-        process.env.TEE_AGENT_URL ||
-        "https://c4d25ca42346b738b6bdd5267cc78d3ebebb8164-3000.dstack-prod8.phala.network";
+        process.env.API_URL ||
+        "https://a5157c8328f314eaca02a9d57925d470536b7b8a-3000.dstack-prod7.phala.network";
 
       const response = await fetch(
         `${teeUrl}/api/screener/execute-transaction`,
@@ -341,10 +385,7 @@ Respond ONLY with JSON:
       }
 
       const result = await response.json();
-      console.log(
-        `✅ Successfully approved proposal ${proposalId} via TEE:`,
-        result
-      );
+      console.log(`✅ Successfully approved proposal ${proposalId}`, result);
 
       return {
         action: "approved",
@@ -353,125 +394,34 @@ Respond ONLY with JSON:
       };
     } catch (error: any) {
       console.error(`❌ TEE approval failed:`, error.message);
-      console.log(`✅ SIMULATING approve for proposal ${proposalId}...`);
       return {
-        action: "approved",
+        action: "failed",
         transactionHash: `simulated_approve_${Date.now()}`,
         timestamp: new Date().toISOString(),
+        error: error.message,
       };
     }
-  }
-
-  async rejectProposal(proposalId: string): Promise<ExecutionResult> {
-    console.log(`❌ Auto-rejecting proposal ${proposalId}...`);
-
-    try {
-      const teeUrl =
-        process.env.TEE_AGENT_URL ||
-        "https://c4d25ca42346b738b6bdd5267cc78d3ebebb8164-3000.dstack-prod8.phala.network";
-
-      const response = await fetch(
-        `${teeUrl}/api/screener/execute-transaction`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            receiverId: this.votingContractId!,
-            actions: [
-              {
-                type: "FunctionCall",
-                params: {
-                  methodName: "reject_proposal",
-                  args: {
-                    proposal_id: parseInt(proposalId),
-                  },
-                  gas: "30000000000000",
-                  deposit: "1",
-                },
-              },
-            ],
-          }),
-        }
-      );
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(
-          `TEE transaction failed: ${response.status} ${response.statusText} - ${errorText}`
-        );
-      }
-
-      const result = await response.json();
-      console.log(
-        `❌ Successfully rejected proposal ${proposalId} via TEE:`,
-        result
-      );
-
-      return {
-        action: "rejected",
-        transactionHash: result.transactionHash,
-        timestamp: new Date().toISOString(),
-      };
-    } catch (error: any) {
-      console.error(`❌ TEE rejection failed:`, error.message);
-      console.log(`❌ SIMULATING reject for proposal ${proposalId}...`);
-      return {
-        action: "rejected",
-        transactionHash: `simulated_reject_${Date.now()}`,
-        timestamp: new Date().toISOString(),
-      };
-    }
-  }
-
-  private extractTransactionHash(result: any): string {
-    return (
-      result.transactionHash ||
-      result.transaction?.hash ||
-      result.hash ||
-      result.txHash ||
-      result.id ||
-      `tx_${Date.now()}`
-    );
-  }
-
-  async approveProposalSimulation(
-    proposalId: string
-  ): Promise<ExecutionResult> {
-    console.log(`✅ SIMULATING approve for proposal ${proposalId}...`);
-    return {
-      action: "approved",
-      transactionHash: `simulated_approve_${Date.now()}`,
-      timestamp: new Date().toISOString(),
-    };
-  }
-
-  async rejectProposalSimulation(proposalId: string): Promise<ExecutionResult> {
-    console.log(`❌ SIMULATING reject for proposal ${proposalId}...`);
-    return {
-      action: "rejected",
-      transactionHash: `simulated_reject_${Date.now()}`,
-      timestamp: new Date().toISOString(),
-    };
   }
 
   private saveResult(
     proposalId: string,
-    decision: "approve" | "reject",
+    approved: boolean,
     reasons: string[]
   ): ScreeningResult {
     const result: ScreeningResult = {
       proposalId,
-      decision,
+      approved,
       reasons,
       timestamp: new Date().toISOString(),
     };
 
     this.screeningHistory.set(proposalId, result);
 
-    const emoji = { approve: "✅", reject: "❌" }[decision];
-    console.log(`${emoji} Proposal ${proposalId}: ${decision.toUpperCase()}`);
+    const emoji = approved ? "✅" : "⏸️";
+    const decisionText = approved
+      ? "APPROVE & EXECUTE"
+      : "NOT APPROVED (no action)";
+    console.log(`${emoji} Proposal ${proposalId}: ${decisionText}`);
     console.log(`   Reasons: ${reasons.join(" | ")}`);
 
     return result;
@@ -483,14 +433,12 @@ Respond ONLY with JSON:
 
   getScreeningStats() {
     const history = this.getScreeningHistory();
-    const stats = history.reduce((acc, result) => {
-      acc[result.decision] = (acc[result.decision] || 0) + 1;
-      return acc;
-    }, {} as Record<string, number>);
+    const approved = history.filter((r) => r.approved).length;
+    const notApproved = history.length - approved;
 
     return {
       total: history.length,
-      breakdown: stats,
+      breakdown: { approved, notApproved },
       lastScreened:
         history.length > 0 ? history[history.length - 1].timestamp : null,
     };

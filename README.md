@@ -12,7 +12,7 @@ It is an example of a NEAR AI agent that monitors House of Stake voting contract
 - First, clone this repo:
 
 ```bash
-git clone https://github.com/NearDeFi/votron && cd votron
+git clone https://github.com/NEARgovernance/votron && cd votron
 ```
 
 - Install NEAR and Shade Agent tooling:

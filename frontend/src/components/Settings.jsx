@@ -1,712 +1,484 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
+import { Constants } from "../hooks/constants.js";
 
-const API_URL = "http://localhost:3000";
-
-function Settings() {
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
+export function Settings() {
   const [agentStatus, setAgentStatus] = useState(null);
-  const [stats, setStats] = useState({ total: 0, breakdown: {} });
-
-  // Simplified configuration state
-  const [agentConfig, setAgentConfig] = useState({
-    trustedProposers: "",
-    blockedProposers: "",
-    apiKey: "",
-    apiProvider: "openai",
-  });
+  const [agentBalance, setAgentBalance] = useState(null);
+  const [agentInfo, setAgentInfo] = useState(null);
+  const [screeningStats, setScreeningStats] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [testResults, setTestResults] = useState(null);
 
   useEffect(() => {
-    loadAgentStatus();
+    fetchAllAgentData();
   }, []);
 
-  const showError = (message, duration = 5000) => {
-    setError(message);
-    setTimeout(() => setError(""), duration);
+  const fetchAllAgentData = async () => {
+    await Promise.all([
+      fetchAgentStatus(),
+      fetchAgentBalance(),
+      fetchAgentInfo(),
+      fetchScreeningStats(),
+    ]);
   };
 
-  const showSuccess = (message, duration = 8000) => {
-    setSuccess(message);
-    setTimeout(() => setSuccess(""), duration);
-  };
-
-  const loadAgentStatus = async () => {
+  const fetchAgentStatus = async () => {
     try {
-      const response = await fetch(`${API_URL}/api/screener/status`);
+      const response = await fetch(`${Constants.API_URL}/api/screener/status`);
       const data = await response.json();
       setAgentStatus(data);
-
-      // Load screening results for stats
-      const resultsResponse = await fetch(`${API_URL}/api/screener/results`);
-      const resultsData = await resultsResponse.json();
-
-      if (resultsData.results) {
-        const breakdown = resultsData.results.reduce((acc, result) => {
-          acc[result.decision] = (acc[result.decision] || 0) + 1;
-          return acc;
-        }, {});
-
-        setStats({
-          total: resultsData.results.length,
-          breakdown: breakdown,
-        });
-      }
     } catch (error) {
-      console.warn("Could not connect to backend agent:", error);
-      showError(
-        "Backend agent not connected - start your agent with: npm run dev"
-      );
+      console.error("Failed to fetch agent status:", error);
     }
   };
 
-  // Test scenarios
-  const [testScenario, setTestScenario] = useState({
-    title: "",
-    description: "",
-    proposer_id: "",
-    budget: "",
-  });
+  const fetchAgentBalance = async () => {
+    try {
+      const response = await fetch(`${Constants.API_URL}/api/screener/balance`);
+      const data = await response.json();
+      setAgentBalance(data);
+    } catch (error) {
+      console.error("Failed to fetch agent balance:", error);
+    }
+  };
 
-  const runTestScenario = async (scenario) => {
-    console.log("🧪 Running test scenario:", scenario.name);
+  const fetchAgentInfo = async () => {
+    try {
+      const response = await fetch(
+        `${Constants.API_URL}/api/screener/agent-info`
+      );
+      const data = await response.json();
+      setAgentInfo(data);
+    } catch (error) {
+      console.error("Failed to fetch agent info:", error);
+    }
+  };
+
+  const fetchScreeningStats = async () => {
+    try {
+      const response = await fetch(`${Constants.API_URL}/api/screener/results`);
+      const data = await response.json();
+      const results = data.results || [];
+
+      const stats = {
+        total: results.length,
+        approved: results.filter((r) => r.approved).length,
+        rejected: results.filter((r) => !r.approved).length,
+        withExecution: results.filter((r) => r.executionResult).length,
+      };
+      setScreeningStats(stats);
+    } catch (error) {
+      console.error("Failed to fetch screening stats:", error);
+    }
+  };
+
+  const runDiagnostics = async () => {
+    setLoading(true);
+    setTestResults(null);
+
+    const results = {
+      timestamp: new Date().toLocaleString(),
+      tests: [],
+    };
 
     try {
-      setLoading(true);
-      setError("");
-      setSuccess("");
-
-      const response = await fetch(`${API_URL}/api/screener/screen`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          proposalId: `test_${scenario.name}_${Date.now()}`,
-          proposal: scenario.proposal,
-        }),
-      });
-
-      const data = await response.json();
-      console.log("📥 Test result:", data);
-
-      if (response.ok) {
-        const decision = data.decision || "unknown";
-        const reasons = data.reasons || ["No reasons provided"];
-        const executed = data.executed ? "✅ Executed" : "❌ Not executed";
-        const txHash = data.transactionHash || "none";
-
-        setSuccess(
-          <div style={{ whiteSpace: "pre-wrap", textAlign: "left" }}>
-            <strong>🧪 Test: {scenario.name}</strong>
-            <br />
-            <br />
-            <strong>Decision:</strong>{" "}
-            <span style={{ color: decision === "approve" ? "green" : "red" }}>
-              {decision.toUpperCase()}
-            </span>
-            <br />
-            <strong>Status:</strong> {executed}
-            <br />
-            <strong>TX Hash:</strong> <code>{txHash}</code>
-            <br />
-            <br />
-            <strong>AI Reasoning:</strong>
-            <ul style={{ margin: "10px 0", paddingLeft: "20px" }}>
-              {reasons.map((reason, i) => (
-                <li key={i} style={{ marginBottom: "5px" }}>
-                  {reason}
-                </li>
-              ))}
-            </ul>
-          </div>
-        );
-
-        await loadAgentStatus();
-      } else {
-        throw new Error(data.error || `HTTP ${response.status}`);
+      // Test 1: API Health Check
+      try {
+        const healthResponse = await fetch(`${Constants.API_URL}/`);
+        const healthData = await healthResponse.json();
+        results.tests.push({
+          name: "API Health Check",
+          status: "success",
+          message: `Server running, uptime: ${healthData.uptime}s`,
+        });
+      } catch (error) {
+        results.tests.push({
+          name: "API Health Check",
+          status: "error",
+          message: error.message,
+        });
       }
+
+      // Test 2: Agent Status
+      try {
+        const statusResponse = await fetch(
+          `${Constants.API_URL}/api/screener/status`
+        );
+        const statusData = await statusResponse.json();
+        results.tests.push({
+          name: "Agent Status",
+          status: "success",
+          message: `Mode: ${
+            statusData.autonomousMode ? "Autonomous" : "Monitor"
+          }, Screened: ${statusData.totalScreened}`,
+        });
+      } catch (error) {
+        results.tests.push({
+          name: "Agent Status",
+          status: "error",
+          message: error.message,
+        });
+      }
+
+      // Test 3: Contract Connection
+      try {
+        const connectionResponse = await fetch(
+          `${Constants.API_URL}/api/screener/test-connection`
+        );
+        const connectionData = await connectionResponse.json();
+        results.tests.push({
+          name: "Contract Connection",
+          status: connectionData.success ? "success" : "warning",
+          message: connectionData.message || connectionData.error,
+        });
+      } catch (error) {
+        results.tests.push({
+          name: "Contract Connection",
+          status: "error",
+          message: error.message,
+        });
+      }
+
+      // Test 4: Agent Balance
+      try {
+        const balanceResponse = await fetch(
+          `${Constants.API_URL}/api/screener/balance`
+        );
+        const balanceData = await balanceResponse.json();
+        results.tests.push({
+          name: "Agent Balance",
+          status: "success",
+          message: `${balanceData.balanceInNEAR} NEAR (${balanceData.agentAccount})`,
+        });
+      } catch (error) {
+        results.tests.push({
+          name: "Agent Balance",
+          status: "error",
+          message: error.message,
+        });
+      }
+
+      // Test 5: Mock Proposal Screening
+      try {
+        const mockProposal = {
+          title: "Test Proposal for Diagnostics",
+          description:
+            "This is a test proposal to verify AI screening functionality.",
+          proposer_id: "test.testnet",
+        };
+
+        const screenResponse = await fetch(
+          `${Constants.API_URL}/api/screener/screen`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              proposalId: "test-diagnostic",
+              proposal: mockProposal,
+            }),
+          }
+        );
+        const screenData = await screenResponse.json();
+
+        results.tests.push({
+          name: "AI Screening Test",
+          status: "success",
+          message: `Result: ${
+            screenData.approved ? "APPROVED" : "REJECTED"
+          } | Reasons: ${screenData.reasons?.join(", ") || "None"}`,
+        });
+      } catch (error) {
+        results.tests.push({
+          name: "AI Screening Test",
+          status: "error",
+          message: error.message,
+        });
+      }
+
+      setTestResults(results);
+
+      // Refresh data after tests
+      await fetchAllAgentData();
     } catch (error) {
-      console.error("❌ Test failed:", error);
-      showError(`Test failed: ${error.message}`);
+      setTestResults({
+        timestamp: new Date().toLocaleString(),
+        error: error.message,
+        tests: [],
+      });
     } finally {
       setLoading(false);
     }
   };
 
-  const runCustomTest = async () => {
-    if (!testScenario.title || !testScenario.description) {
-      showError("Please fill in at least title and description");
-      return;
-    }
-
-    await runTestScenario({
-      name: "Custom",
-      proposal: {
-        title: testScenario.title,
-        description: testScenario.description,
-        proposer_id: testScenario.proposer_id || "custom.near",
-        budget: testScenario.budget ? parseInt(testScenario.budget) : undefined,
-      },
-    });
-  };
-  const testAIConnection = async () => {
-    const scenario = {
-      name: "Basic Connection",
-      proposal: {
-        title: "NEAR Developer Grant Program",
-        description:
-          "A comprehensive program to fund innovative NEAR Protocol applications, smart contracts, and developer tools. This initiative will provide grants ranging from $5,000 to $50,000 to qualified developers building on NEAR. The program includes mentorship, technical support, and marketing assistance to help projects succeed. We aim to fund 20 high-quality projects over 6 months.",
-        proposer_id: "developer-dao.near",
-        budget: 25000,
-      },
+  const getStatusBadge = (status) => {
+    const colors = {
+      success: "bg-success",
+      warning: "bg-warning",
+      error: "bg-danger",
     };
-
-    await runTestScenario(scenario);
-  };
-
-  const handleInputChange = (field, value) => {
-    setAgentConfig((prev) => ({
-      ...prev,
-      [field]: value,
-    }));
-  };
-
-  const applyPreset = (presetName) => {
-    const presets = {
-      permissive: {
-        trustedProposers: "foundation.near, nearfi.near",
-        blockedProposers: "",
-        apiProvider: "openai",
-      },
-      conservative: {
-        trustedProposers: "foundation.near",
-        blockedProposers: "badactor.near, scammer.near",
-        apiProvider: "openai",
-      },
-      security: {
-        trustedProposers: "foundation.near",
-        blockedProposers: "badactor.near, anonymous.near",
-        apiProvider: "anthropic",
-      },
-    };
-
-    const preset = presets[presetName];
-    if (preset) {
-      setAgentConfig((prev) => ({ ...prev, ...preset }));
-      setError("");
-      setSuccess(`Applied ${presetName} preset configuration`);
-    }
-  };
-
-  const resetToDefaults = () => {
-    setAgentConfig({
-      trustedProposers: "",
-      blockedProposers: "",
-      apiKey: "",
-      apiProvider: "openai",
-    });
-    setError("");
-    setSuccess("");
+    return colors[status] || "bg-secondary";
   };
 
   return (
     <div className="container-fluid">
       <div className="panel">
-        <h2>🤖 AI Agent Configuration</h2>
-        <p style={{ color: "#333", marginBottom: "20px" }}>
-          Configure your autonomous AI agent. The agent uses AI to evaluate
-          proposals and can automatically approve or reject them.
-        </p>
-
-        {error && (
-          <div
-            style={{
-              padding: "15px",
-              background: "#f8d7da",
-              border: "1px solid #f5c6cb",
-              borderRadius: "8px",
-              marginBottom: "20px",
-              color: "#721c24",
-            }}
-          >
-            <strong>Error:</strong> {error}
-          </div>
-        )}
-
-        {success && (
-          <div
-            style={{
-              padding: "15px",
-              background: "#d4edda",
-              border: "1px solid #c3e6cb",
-              borderRadius: "8px",
-              marginBottom: "20px",
-              color: "#155724",
-            }}
-          >
-            {typeof success === "string" ? success : success}
-          </div>
-        )}
-
-        {/* Agent Status */}
-        <div className="criteria-section">
-          <h3>📊 Agent Status</h3>
-          {agentStatus ? (
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
-                gap: "15px",
-              }}
-            >
-              <div
-                style={{
-                  background: "white",
-                  padding: "15px",
-                  borderRadius: "8px",
-                  border: "1px solid #ddd",
-                }}
-              >
-                <strong>Autonomous Mode:</strong>
-                <br />
-                <span
-                  style={{
-                    color: agentStatus.autonomousMode ? "green" : "red",
-                  }}
-                >
-                  {agentStatus.autonomousMode ? "✅ Active" : "❌ Disabled"}
-                </span>
-              </div>
-              <div
-                style={{
-                  background: "white",
-                  padding: "15px",
-                  borderRadius: "8px",
-                  border: "1px solid #ddd",
-                }}
-              >
-                <strong>Configuration:</strong>
-                <br />
-                <span
-                  style={{ color: agentStatus.configured ? "green" : "red" }}
-                >
-                  {agentStatus.configured
-                    ? "✅ Configured"
-                    : "❌ Missing Config"}
-                </span>
-              </div>
-              <div
-                style={{
-                  background: "white",
-                  padding: "15px",
-                  borderRadius: "8px",
-                  border: "1px solid #ddd",
-                }}
-              >
-                <strong>Proposals Screened:</strong>
-                <br />
-                <span style={{ fontSize: "24px", fontWeight: "bold" }}>
-                  {stats.total}
-                </span>
-              </div>
-              <div
-                style={{
-                  background: "white",
-                  padding: "15px",
-                  borderRadius: "8px",
-                  border: "1px solid #ddd",
-                }}
-              >
-                <strong>Agent Account:</strong>
-                <br />
-                <code style={{ fontSize: "12px" }}>
-                  {agentStatus.agentAccount || "Not set"}
-                </code>
-              </div>
-            </div>
-          ) : (
-            <p style={{ color: "#666" }}>Loading agent status...</p>
-          )}
-        </div>
-
-        {/* AI Configuration */}
-        <div className="criteria-section">
-          <h3>🧠 AI Configuration</h3>
-          <div className="input-group">
-            <label>AI Provider</label>
-            <select
-              value={agentConfig.apiProvider}
-              onChange={(e) => handleInputChange("apiProvider", e.target.value)}
-              disabled={loading}
-            >
-              <option value="openai">OpenAI (GPT-4)</option>
-              <option value="anthropic">Anthropic (Claude)</option>
-            </select>
-            <small style={{ color: "#666" }}>
-              Choose your AI provider for proposal analysis
-            </small>
-          </div>
-
-          <div className="input-group">
-            <label>API Key</label>
-            <input
-              type="password"
-              value={agentConfig.apiKey}
-              onChange={(e) => handleInputChange("apiKey", e.target.value)}
-              disabled={loading}
-              placeholder={
-                agentConfig.apiProvider === "openai"
-                  ? "sk-..."
-                  : "your-anthropic-key"
-              }
-            />
-            <small style={{ color: "#666" }}>
-              {agentConfig.apiProvider === "openai"
-                ? "Your OpenAI API key (or set OPENAI_API_KEY environment variable)"
-                : "Your Anthropic API key (or set ANTHROPIC_API_KEY environment variable)"}
-            </small>
-          </div>
-        </div>
-
-        {/* Proposer Rules */}
-        <div className="criteria-section">
-          <h3>👤 Proposer Rules</h3>
-          <div className="input-group">
-            <label>Trusted Proposers (comma separated)</label>
-            <input
-              type="text"
-              value={agentConfig.trustedProposers}
-              onChange={(e) =>
-                handleInputChange("trustedProposers", e.target.value)
-              }
-              disabled={loading}
-              placeholder="e.g. foundation.near, nearfi.near"
-            />
-            <small style={{ color: "#666" }}>
-              Proposals from these accounts will be automatically approved
-              without AI analysis
-            </small>
-          </div>
-
-          <div className="input-group">
-            <label>Blocked Proposers (comma separated)</label>
-            <input
-              type="text"
-              value={agentConfig.blockedProposers}
-              onChange={(e) =>
-                handleInputChange("blockedProposers", e.target.value)
-              }
-              disabled={loading}
-              placeholder="e.g. badactor.near, scammer.near"
-            />
-            <small style={{ color: "#666" }}>
-              Proposals from these accounts will be automatically rejected
-            </small>
-          </div>
-        </div>
-
-        {/* Screening Results */}
-        {stats.total > 0 && (
-          <div className="criteria-section">
-            <h3>📊 Screening Results</h3>
-            <div style={{ display: "flex", gap: "15px", flexWrap: "wrap" }}>
-              {Object.entries(stats.breakdown).map(([decision, count]) => (
-                <div
-                  key={decision}
-                  style={{
-                    background: decision === "approve" ? "#d4edda" : "#f8d7da",
-                    padding: "10px 15px",
-                    borderRadius: "8px",
-                    border: `1px solid ${
-                      decision === "approve" ? "#c3e6cb" : "#f5c6cb"
-                    }`,
-                  }}
-                >
-                  <strong style={{ textTransform: "capitalize" }}>
-                    {decision}:
-                  </strong>{" "}
-                  {count}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Actions */}
-        <div className="button-group">
+        <div className="d-flex justify-content-between align-items-center mb-4">
+          <h2>⚙️ AI Agent Management</h2>
           <button
             className="btn btn-primary"
-            onClick={testAIConnection}
-            disabled={loading}
-            style={{
-              opacity: loading ? 0.6 : 1,
-              cursor: loading ? "not-allowed" : "pointer",
-            }}
-          >
-            {loading ? "🔄 Testing..." : "🧪 Quick AI Test"}
-          </button>
-
-          <button
-            className="btn btn-secondary"
-            onClick={resetToDefaults}
+            onClick={runDiagnostics}
             disabled={loading}
           >
-            🔄 Reset to Defaults
+            {loading ? "🔄 Running Diagnostics..." : "🧪 Run Full Diagnostics"}
           </button>
         </div>
 
-        {/* AI Test Scenarios */}
-        <div className="criteria-section">
-          <h3>🧪 AI Test Scenarios</h3>
-          <p style={{ color: "#666", marginBottom: "15px" }}>
-            Test your AI agent with different proposal scenarios to see how it
-            analyzes and decides.
-          </p>
-
-          {/* Preset Scenarios */}
-          <div style={{ marginBottom: "20px" }}>
-            <h4 style={{ fontSize: "16px", marginBottom: "10px" }}>
-              Quick Test Scenarios:
-            </h4>
-            <div className="button-group">
-              <button
-                className="btn btn-success"
-                onClick={() =>
-                  runTestScenario({
-                    name: "Good Project",
-                    proposal: {
-                      title: "NEAR Developer Education Initiative",
-                      description:
-                        "A comprehensive educational program to onboard new developers to the NEAR ecosystem. This initiative includes creating video tutorials, documentation, workshops, and mentorship programs. The project aims to increase developer adoption by 50% over 6 months through high-quality educational content and hands-on learning experiences.",
-                      proposer_id: "education.near",
-                      budget: 15000,
-                    },
-                  })
-                }
-                disabled={loading}
-              >
-                ✅ Good Project
-              </button>
-
-              <button
-                className="btn btn-danger"
-                onClick={() =>
-                  runTestScenario({
-                    name: "Suspicious Project",
-                    proposal: {
-                      title: "Amazing Investment Opportunity",
-                      description:
-                        "Get rich quick with this amazing investment scheme! Guaranteed 1000% returns in just 30 days. No risk involved! Send me your NEAR tokens and I'll double them overnight using my secret trading algorithm.",
-                      proposer_id: "totallylegit.near",
-                      budget: 100000,
-                    },
-                  })
-                }
-                disabled={loading}
-              >
-                ❌ Suspicious Project
-              </button>
-
-              <button
-                className="btn btn-warning"
-                onClick={() =>
-                  runTestScenario({
-                    name: "Ambitious Project",
-                    proposal: {
-                      title: "Build the Metaverse on NEAR",
-                      description:
-                        "Revolutionary metaverse platform that will change everything. We need $500k to build a virtual world with AI, VR, blockchain gaming, NFTs, and DeFi all combined. No technical details available yet but trust us it will be amazing.",
-                      proposer_id: "bigdreams.near",
-                      budget: 500000,
-                    },
-                  })
-                }
-                disabled={loading}
-              >
-                ⚠️ Ambitious Project
-              </button>
-
-              <button
-                className="btn btn-secondary"
-                onClick={() =>
-                  runTestScenario({
-                    name: "Technical Project",
-                    proposal: {
-                      title: "NEAR Protocol Performance Optimization",
-                      description:
-                        "Technical improvements to NEAR Protocol's consensus mechanism focusing on transaction throughput optimization. Our team has identified specific bottlenecks in the block validation process and proposes implementing a new caching layer with benchmark improvements of 15-20% transaction speed.",
-                      proposer_id: "nearcore.near",
-                      budget: 30000,
-                    },
-                  })
-                }
-                disabled={loading}
-              >
-                🔧 Technical Project
-              </button>
-            </div>
+        {/* System Configuration */}
+        <div className="card mb-4">
+          <div className="card-header">
+            <h5>🔧 System Configuration</h5>
           </div>
-
-          {/* Custom Test Form */}
-          <div
-            style={{
-              background: "#f8f9fa",
-              padding: "20px",
-              borderRadius: "8px",
-              border: "1px solid #dee2e6",
-            }}
-          >
-            <h4 style={{ fontSize: "16px", marginBottom: "15px" }}>
-              Custom Test Proposal:
-            </h4>
-
-            <div className="input-group">
-              <label>Proposal Title</label>
-              <input
-                type="text"
-                value={testScenario.title}
-                onChange={(e) =>
-                  setTestScenario((prev) => ({
-                    ...prev,
-                    title: e.target.value,
-                  }))
-                }
-                disabled={loading}
-                placeholder="e.g. NEAR Community Fund"
-              />
-            </div>
-
-            <div className="input-group">
-              <label>Description</label>
-              <textarea
-                value={testScenario.description}
-                onChange={(e) =>
-                  setTestScenario((prev) => ({
-                    ...prev,
-                    description: e.target.value,
-                  }))
-                }
-                disabled={loading}
-                placeholder="Detailed description of the proposal..."
-                style={{ minHeight: "100px" }}
-              />
-            </div>
-
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "1fr 1fr",
-                gap: "15px",
-              }}
-            >
-              <div className="input-group">
-                <label>Proposer ID</label>
-                <input
-                  type="text"
-                  value={testScenario.proposer_id}
-                  onChange={(e) =>
-                    setTestScenario((prev) => ({
-                      ...prev,
-                      proposer_id: e.target.value,
-                    }))
-                  }
-                  disabled={loading}
-                  placeholder="proposer.near"
-                />
+          <div className="card-body">
+            <div className="row">
+              <div className="col-md-6">
+                <p>
+                  <strong>Voting Contract:</strong>{" "}
+                  <code>{Constants.VOTING_CONTRACT_ID}</code>
+                </p>
+                <p>
+                  <strong>Agent Contract:</strong>{" "}
+                  <code>{Constants.AGENT_ACCOUNT_ID}</code>
+                </p>
+                <p>
+                  <strong>Votron API:</strong> <code>{Constants.API_URL}</code>
+                </p>
               </div>
-
-              <div className="input-group">
-                <label>Budget (USD)</label>
-                <input
-                  type="number"
-                  value={testScenario.budget}
-                  onChange={(e) =>
-                    setTestScenario((prev) => ({
-                      ...prev,
-                      budget: e.target.value,
-                    }))
-                  }
-                  disabled={loading}
-                  placeholder="10000"
-                />
+              <div className="col-md-6">
+                {agentStatus && (
+                  <>
+                    <p>
+                      <strong>Agent Mode:</strong>
+                      <span
+                        className={`badge ms-2 ${
+                          agentStatus.autonomousMode
+                            ? "bg-success"
+                            : "bg-warning"
+                        }`}
+                      >
+                        {agentStatus.autonomousMode
+                          ? "Autonomous"
+                          : "Monitor Only"}
+                      </span>
+                    </p>
+                    <p>
+                      <strong>Agent Account:</strong>{" "}
+                      <code>{agentStatus.agentAccount}</code>
+                    </p>
+                    <p>
+                      <strong>Total Screened:</strong>{" "}
+                      {agentStatus.totalScreened}
+                    </p>
+                  </>
+                )}
               </div>
             </div>
-
-            <button
-              className="btn btn-primary"
-              onClick={runCustomTest}
-              disabled={
-                loading || !testScenario.title || !testScenario.description
-              }
-              style={{ marginTop: "15px" }}
-            >
-              {loading ? "🔄 Testing..." : "🧪 Test Custom Proposal"}
-            </button>
           </div>
         </div>
 
-        {/* Presets */}
-        <div className="criteria-section">
-          <h3>⚡ Quick Presets</h3>
-          <div className="button-group">
-            <button
-              className="btn btn-success"
-              onClick={() => applyPreset("permissive")}
-              disabled={loading}
-            >
-              🟢 Permissive
-            </button>
-            <button
-              className="btn btn-warning"
-              onClick={() => applyPreset("conservative")}
-              disabled={loading}
-            >
-              🟡 Conservative
-            </button>
-            <button
-              className="btn btn-danger"
-              onClick={() => applyPreset("security")}
-              disabled={loading}
-            >
-              🔴 Security Focused
-            </button>
+        {/* Agent Status & Stats */}
+        <div className="row mb-4">
+          <div className="col-md-6">
+            <div className="card">
+              <div className="card-header">
+                <h6>🤖 Agent Status</h6>
+              </div>
+              <div className="card-body">
+                {agentBalance ? (
+                  <>
+                    <p>
+                      <strong>Balance:</strong> {agentBalance.balanceInNEAR}{" "}
+                      NEAR
+                    </p>
+                    <p>
+                      <strong>Account:</strong>{" "}
+                      <code>{agentBalance.agentAccount}</code>
+                    </p>
+                    <small className="text-muted">
+                      Raw: {agentBalance.balance?.available || "Unknown"}{" "}
+                      yoctoNEAR
+                    </small>
+                  </>
+                ) : (
+                  <p className="text-muted">Loading balance...</p>
+                )}
+              </div>
+            </div>
+          </div>
+          <div className="col-md-6">
+            <div className="card">
+              <div className="card-header">
+                <h6>📊 Screening Statistics</h6>
+              </div>
+              <div className="card-body">
+                {screeningStats ? (
+                  <>
+                    <p>
+                      <strong>Total Screened:</strong> {screeningStats.total}
+                    </p>
+                    <p>
+                      <strong>Approved:</strong> {screeningStats.approved}
+                    </p>
+                    <p>
+                      <strong>Rejected:</strong> {screeningStats.rejected}
+                    </p>
+                    <p>
+                      <strong>With Execution:</strong>{" "}
+                      {screeningStats.withExecution}
+                    </p>
+                  </>
+                ) : (
+                  <p className="text-muted">Loading stats...</p>
+                )}
+              </div>
+            </div>
           </div>
         </div>
 
-        {/* Instructions */}
-        <div
-          style={{
-            background: "#e7f3ff",
-            padding: "20px",
-            borderRadius: "8px",
-            marginTop: "20px",
-            border: "1px solid #bee5eb",
-          }}
-        >
-          <h4>🔧 Setup & Testing Guide:</h4>
-          <ol style={{ paddingLeft: "20px", margin: "10px 0" }}>
-            <li>Set your API key above or in environment variables</li>
-            <li>Configure trusted/blocked proposers (optional)</li>
-            <li>
-              Use the <strong>🧪 AI Test Scenarios</strong> to see how your
-              agent analyzes different proposals
-            </li>
-            <li>
-              Try the preset scenarios: Good Project (should approve) vs
-              Suspicious Project (should reject)
-            </li>
-            <li>
-              Create custom test proposals to fine-tune your understanding
-            </li>
-            <li>
-              Once satisfied, your agent will automatically screen real
-              proposals
-            </li>
-          </ol>
-          <p style={{ margin: "10px 0", fontSize: "14px", color: "#666" }}>
-            <strong>💡 Pro Tip:</strong> The AI analyzes proposal quality,
-            legitimacy, ecosystem benefit, and feasibility. Test different
-            scenarios to understand its decision-making process!
-          </p>
+        {/* Agent Information */}
+        {agentInfo && (
+          <div className="card mb-4">
+            <div className="card-header">
+              <h5>📋 Agent Details</h5>
+            </div>
+            <div className="card-body">
+              <div className="row">
+                <div className="col-md-6">
+                  <p>
+                    <strong>Runtime Account:</strong>{" "}
+                    <code>{agentInfo.agentAccountId}</code>
+                  </p>
+                  <p>
+                    <strong>Configured Account:</strong>{" "}
+                    <code>{agentInfo.configuredAccountId}</code>
+                  </p>
+                  <p>
+                    <strong>Voting Contract:</strong>{" "}
+                    <code>{agentInfo.votingContract}</code>
+                  </p>
+                </div>
+                <div className="col-md-6">
+                  <p>
+                    <strong>Custom Contract:</strong>{" "}
+                    {agentInfo.customContract || "None"}
+                  </p>
+                  <p>
+                    <strong>Execution Mode:</strong> {agentInfo.mode}
+                  </p>
+                  <p>
+                    <strong>Status:</strong>
+                    <span className="badge bg-success ms-2">Active</span>
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Diagnostic Results */}
+        {testResults && (
+          <div className="card mb-4">
+            <div className="card-header">
+              <h5>🧪 Diagnostic Results ({testResults.timestamp})</h5>
+            </div>
+            <div className="card-body">
+              {testResults.error ? (
+                <div className="alert alert-danger">
+                  <strong>Diagnostics Failed:</strong> {testResults.error}
+                </div>
+              ) : (
+                <div>
+                  {testResults.tests.map((test, index) => (
+                    <div
+                      key={index}
+                      className="d-flex justify-content-between align-items-center mb-2 p-2 border rounded"
+                    >
+                      <div>
+                        <strong>{test.name}</strong>
+                        <br />
+                        <small className="text-muted">{test.message}</small>
+                      </div>
+                      <span className={`badge ${getStatusBadge(test.status)}`}>
+                        {test.status.toUpperCase()}
+                      </span>
+                    </div>
+                  ))}
+
+                  <div className="mt-3 text-center">
+                    {testResults.tests.every((t) => t.status === "success") ? (
+                      <div className="alert alert-success">
+                        🎉 All diagnostics passed! Your AI agent is fully
+                        operational.
+                      </div>
+                    ) : (
+                      <div className="alert alert-warning">
+                        ⚠️ Some tests failed. Check the results above for
+                        details.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Quick Actions */}
+        <div className="card">
+          <div className="card-header">
+            <h5>⚡ Quick Actions</h5>
+          </div>
+          <div className="card-body">
+            <div className="d-flex gap-2 flex-wrap">
+              <button
+                className="btn btn-outline-primary"
+                onClick={fetchAllAgentData}
+                disabled={loading}
+              >
+                🔄 Refresh Data
+              </button>
+
+              <button
+                className="btn btn-outline-info"
+                onClick={() =>
+                  window.open(
+                    `${Constants.API_URL}/api/debug/websocket-status`,
+                    "_blank"
+                  )
+                }
+              >
+                📡 WebSocket Status
+              </button>
+
+              <button
+                className="btn btn-outline-success"
+                onClick={() =>
+                  window.open(
+                    `${Constants.API_URL}/api/screener/results`,
+                    "_blank"
+                  )
+                }
+              >
+                📊 View Raw Results
+              </button>
+
+              <button
+                className="btn btn-outline-secondary"
+                onClick={() => window.open(`${Constants.API_URL}`, "_blank")}
+              >
+                🏠 Agent Dashboard
+              </button>
+            </div>
+          </div>
         </div>
       </div>
     </div>
