@@ -8,8 +8,9 @@ const PROPOSALS_PER_PAGE = 10;
 export function Proposals({ accountId }) {
   const [statusFilter, setStatusFilter] = useState("all");
   const [currentPage, setCurrentPage] = useState(1);
-  const [screeningResults, setScreeningResults] = useState([]);
   const [agentStatus, setAgentStatus] = useState(null);
+  const [executionHistory, setExecutionHistory] = useState([]);
+  const [autoApprovalStats, setAutoApprovalStats] = useState(null);
   const [testLoading, setTestLoading] = useState(false);
   const [testResult, setTestResult] = useState(null);
 
@@ -18,136 +19,126 @@ export function Proposals({ accountId }) {
     Constants.VOTING_CONTRACT_ID
   );
 
-  // Fetch AI agent status and screening results
+  // Fetch agent data on component mount and periodically
   useEffect(() => {
-    fetchAgentStatus();
-    fetchScreeningResults();
+    fetchAllAgentData();
+
+    // Refresh every 5 seconds for live demo
+    const interval = setInterval(fetchAllAgentData, 5000);
+    return () => clearInterval(interval);
   }, []);
+
+  const fetchAllAgentData = async () => {
+    try {
+      await Promise.all([
+        fetchAgentStatus(),
+        fetchAutoApprovalStats(),
+        fetchExecutionHistory(),
+      ]);
+    } catch (error) {
+      console.error("Failed to fetch agent data:", error);
+    }
+  };
 
   const fetchAgentStatus = async () => {
     try {
-      const response = await fetch(`${Constants.API_URL}/api/screener/status`);
-      const data = await response.json();
-      setAgentStatus(data);
+      const response = await fetch(
+        `${Constants.API_URL}/api/screener/agent-status`
+      );
+      if (response.ok) {
+        const data = await response.json();
+        setAgentStatus(data);
+      } else {
+        console.error("Failed to fetch agent status:", response.status);
+      }
     } catch (error) {
       console.error("Failed to fetch agent status:", error);
     }
   };
 
-  const fetchScreeningResults = async () => {
+  const fetchAutoApprovalStats = async () => {
     try {
-      const response = await fetch(`${Constants.API_URL}/api/screener/results`);
-      const data = await response.json();
-      setScreeningResults(data.results || []);
+      const response = await fetch(
+        `${Constants.API_URL}/api/screener/auto-approval-stats`
+      );
+      if (response.ok) {
+        const data = await response.json();
+        setAutoApprovalStats(data);
+      }
     } catch (error) {
-      console.error("Failed to fetch screening results:", error);
+      console.error("Failed to fetch auto-approval stats:", error);
     }
   };
 
-  // Test AI Agent Function
-  // Replace your testAIAgent function with this version that uses hardcoded test data:
+  const fetchExecutionHistory = async () => {
+    try {
+      const response = await fetch(
+        `${Constants.API_URL}/api/screener/execution-history`
+      );
+      if (response.ok) {
+        const data = await response.json();
+        setExecutionHistory(data.executions || []);
+      }
+    } catch (error) {
+      console.error("Failed to fetch execution history:", error);
+    }
+  };
 
-  const testAIAgent = async () => {
+  // Test agent contract approval
+  const testAgentApproval = async () => {
     setTestLoading(true);
     setTestResult(null);
 
     try {
-      // Test 1: Check agent status
-      const statusResponse = await fetch(
-        `${Constants.API_URL}/api/screener/status`
-      );
-      const statusData = await statusResponse.json();
-
-      // Test 2: Test connection
-      const connectionResponse = await fetch(
-        `${Constants.API_URL}/api/screener/test-connection`
-      );
-      const connectionData = await connectionResponse.json();
-
-      // Test 3: Test proposal screening with hardcoded test data
-      console.log("🧪 Testing AI screening with hardcoded proposal...");
-
-      const testProposalData = {
-        proposalId: "test-proposal-" + Date.now(), // Unique ID for testing
-        proposal: {
-          title: "Test Proposal: Allocate 1000 NEAR for Community Development",
-          description:
-            "This is a test proposal to allocate 1000 NEAR tokens for community development initiatives including hackathons, workshops, and developer grants. The funds will be managed by a community committee and distributed over 6 months.",
-          proposer_id: "community-dev.testnet",
-        },
-      };
+      const testProposalId = "13"; // Default test proposal
 
       console.log(
-        "📤 Sending test proposal:",
-        JSON.stringify(testProposalData, null, 2)
+        `🧪 Testing agent contract approval for proposal ${testProposalId}...`
       );
 
-      let screeningTest = null;
-      try {
-        const screeningResponse = await fetch(
-          `${Constants.API_URL}/api/screener/screen`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Accept: "application/json",
-            },
-            body: JSON.stringify(testProposalData),
-          }
-        );
-
-        console.log("📡 Screening response status:", screeningResponse.status);
-        console.log("📡 Screening response headers:", [
-          ...screeningResponse.headers.entries(),
-        ]);
-
-        const responseText = await screeningResponse.text();
-        console.log("📄 Screening response body:", responseText);
-
-        if (screeningResponse.ok) {
-          screeningTest = JSON.parse(responseText);
-          console.log("✅ Screening test successful:", screeningTest);
-        } else {
-          console.error(
-            `❌ Screening API error ${screeningResponse.status}:`,
-            responseText
-          );
-
-          let errorMessage = responseText;
-          try {
-            const errorJson = JSON.parse(responseText);
-            errorMessage = errorJson.error || errorJson.message || responseText;
-          } catch {
-            // Keep original response
-          }
-
-          screeningTest = {
-            error: true,
-            status: screeningResponse.status,
-            message: errorMessage,
-            proposalId: testProposalData.proposalId,
-          };
+      const response = await fetch(
+        `${Constants.API_URL}/api/screener/agent-approve`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            proposalId: testProposalId,
+            force: true, // Override any AI rejection for testing
+          }),
         }
-      } catch (screeningError) {
-        console.error("❌ Screening request failed:", screeningError);
-        screeningTest = {
-          error: true,
-          message: screeningError.message,
-          proposalId: testProposalData.proposalId,
-        };
-      }
+      );
 
-      setTestResult({
-        success: true,
-        status: statusData,
-        connection: connectionData,
-        screening: screeningTest,
-        timestamp: new Date().toLocaleString(),
-      });
+      const result = await response.json();
+
+      if (response.ok && result.success) {
+        setTestResult({
+          success: true,
+          type: "agent-approval",
+          proposalId: testProposalId,
+          txHash: result.result?.transaction?.hash || result.result?.txHash,
+          message: `✅ Agent contract approval successful!`,
+          details: result,
+          timestamp: new Date().toLocaleString(),
+        });
+
+        // Refresh data to show updates
+        setTimeout(fetchAllAgentData, 2000);
+      } else {
+        setTestResult({
+          success: false,
+          type: "agent-approval",
+          error: result.error || "Unknown error",
+          agentValid: result.agentValid,
+          timestamp: new Date().toLocaleString(),
+        });
+      }
     } catch (error) {
-      console.error("❌ Test failed:", error);
+      console.error("❌ Agent approval test failed:", error);
       setTestResult({
         success: false,
+        type: "agent-approval",
         error: error.message,
         timestamp: new Date().toLocaleString(),
       });
@@ -156,26 +147,245 @@ export function Proposals({ accountId }) {
     }
   };
 
-  // Create lookup for screening results by proposal ID
-  const screeningLookup = useMemo(() => {
+  const createTestProposal = async () => {
+    if (!accountId) {
+      alert("Please sign in first to create a test proposal");
+      return;
+    }
+
+    setTestLoading(true);
+    setTestResult(null);
+
+    try {
+      console.log("🧪 Creating HARDCODED test proposal via NEAR wallet...");
+
+      const testMetadata = {
+        title: "Demo: Fund Community Tooling Sprint",
+        description:
+          "This is a hardcoded test proposal to validate the end-to-end submission flow.",
+        link: "https://forum.near.org/t/example-thread",
+        voting_options: ["Approve", "Reject", "Abstain"],
+      };
+
+      console.log("📤 Creating proposal with metadata:", testMetadata);
+
+      const txResult = await near.sendTx({
+        receiverId: Constants.VOTING_CONTRACT_ID,
+        actions: [
+          near.actions.functionCall({
+            methodName: "create_proposal",
+            gas: $$`100 Tgas`,
+            deposit: $$`0.2 NEAR`,
+            args: { metadata: testMetadata },
+          }),
+        ],
+        waitUntil: "INCLUDED",
+      });
+
+      console.log("✅ Hardcoded proposal TX:", txResult);
+
+      setTestResult({
+        success: true,
+        type: "proposal-creation",
+        txHash: txResult.transaction?.hash,
+        message:
+          "✅ Hardcoded test proposal created successfully! The agent should now detect and process it.",
+        metadata: testMetadata,
+        timestamp: new Date().toLocaleString(),
+      });
+
+      // Refresh proposals and agent data
+      setTimeout(() => {
+        refetch();
+        fetchAllAgentData();
+      }, 3000);
+    } catch (error) {
+      console.error("❌ Test proposal creation failed:", error);
+      setTestResult({
+        success: false,
+        type: "proposal-creation",
+        error: error.message,
+        timestamp: new Date().toLocaleString(),
+      });
+    } finally {
+      setTestLoading(false);
+    }
+  };
+
+  // Debug agent configuration
+  const debugAgentConfig = async () => {
+    setTestLoading(true);
+
+    try {
+      console.clear();
+      console.log("🔍 Starting comprehensive agent debug...");
+
+      // Fetch all debug endpoints
+      const [healthResp, agentStatusResp, websocketResp, anthropicResp] =
+        await Promise.all([
+          fetch(`${Constants.API_URL}/`),
+          fetch(`${Constants.API_URL}/api/screener/agent-status`),
+          fetch(`${Constants.API_URL}/api/debug/websocket-status`),
+          fetch(`${Constants.API_URL}/debug/env`),
+        ]);
+
+      const [health, agentStatus, websocket, anthropic] = await Promise.all([
+        healthResp.json(),
+        agentStatusResp.json(),
+        websocketResp.json(),
+        anthropicResp.json(),
+      ]);
+
+      console.log("🏥 Health Check:", health);
+      console.log("🤖 Agent Status:", agentStatus);
+      console.log("🔌 WebSocket Status:", websocket);
+      console.log("🧠 Anthropic Config:", anthropic);
+
+      // Analyze results
+      const issues = [];
+      const successes = [];
+
+      // Check health
+      if (health.shadeAgent === "active") {
+        successes.push("✅ Shade agent service active");
+      } else {
+        issues.push("❌ Shade agent service not active");
+      }
+
+      // Check WebSocket
+      if (websocket.connected) {
+        successes.push("✅ WebSocket connected for proposal monitoring");
+      } else {
+        issues.push(
+          "❌ WebSocket not connected - proposals won't be auto-detected"
+        );
+      }
+
+      // Check agent contract
+      if (agentStatus.agentContract?.agentRegistered) {
+        successes.push("✅ Agent registered with contract");
+      } else {
+        issues.push("❌ Agent not registered with contract");
+      }
+
+      // Check Anthropic API
+      if (anthropic.hasAnthropicKey) {
+        successes.push("✅ Anthropic API key configured");
+      } else {
+        issues.push("❌ Anthropic API key missing");
+      }
+
+      // Check auto-approval
+      if (agentStatus.autoApproval?.enabled) {
+        successes.push("✅ Auto-approval enabled");
+      } else {
+        issues.push("❌ Auto-approval disabled");
+      }
+
+      const summary = `
+🔍 SHADE AGENT DEBUG REPORT
+
+${successes.length > 0 ? "✅ WORKING:\n" + successes.join("\n") + "\n\n" : ""}${
+        issues.length > 0 ? "❌ ISSUES:\n" + issues.join("\n") + "\n\n" : ""
+      }📊 STATISTICS:
+• Proposals Screened: ${health.screener?.totalScreened || 0}
+• Successful Executions: ${autoApprovalStats?.autoApproval?.executed || 0}
+• Failed Executions: ${autoApprovalStats?.autoApproval?.executionFailed || 0}
+
+🔌 MONITORING:
+• WebSocket: ${websocket.connected ? "Connected" : "Disconnected"}
+• Voting Contract: ${websocket.votingContract}
+• Reconnect Attempts: ${websocket.reconnectAttempts}
+
+🤖 AGENT CONTRACT:
+• Contract ID: ${agentStatus.agentContract?.contractId}
+• Agent Registered: ${agentStatus.agentContract?.agentRegistered ? "Yes" : "No"}
+• Contract Balance: ${agentStatus.agentContract?.contractBalance || "Unknown"}
+
+🛡️ SECURITY:
+• TEE Attestation: ${
+        agentStatus.securityFeatures?.attestationRequired
+          ? "Required"
+          : "Not Required"
+      }
+• Codehash Validation: ${
+        agentStatus.securityFeatures?.codehashValidation ? "Active" : "Inactive"
+      }
+• Access Control: ${agentStatus.securityFeatures?.accessControl || "Unknown"}
+
+${
+  issues.length === 0
+    ? "🎉 ALL SYSTEMS OPERATIONAL!"
+    : "⚠️ ISSUES DETECTED - CHECK CONFIGURATION"
+}
+      `.trim();
+
+      alert(summary);
+      console.log(summary);
+    } catch (error) {
+      const errorMsg = `❌ Debug failed: ${error.message}`;
+      console.error(errorMsg);
+      alert(errorMsg);
+    } finally {
+      setTestLoading(false);
+    }
+  };
+
+  // Force process a specific proposal
+  const forceProcessProposal = async () => {
+    const proposalId = prompt("Enter proposal ID to force process:", "1");
+    if (!proposalId) return;
+
+    setTestLoading(true);
+    try {
+      const response = await fetch(`${Constants.API_URL}/process-proposal`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ proposalId }),
+      });
+
+      const result = await response.json();
+
+      if (response.ok) {
+        alert(
+          `✅ Proposal ${proposalId} processed!\n\nApproved: ${
+            result.approved
+          }\nExecuted: ${result.executed}\nReasons: ${result.reasons?.join(
+            ", "
+          )}`
+        );
+      } else {
+        alert(`❌ Processing failed: ${result.error}`);
+      }
+
+      fetchAllAgentData();
+    } catch (error) {
+      alert(`❌ Error: ${error.message}`);
+    } finally {
+      setTestLoading(false);
+    }
+  };
+
+  // Create lookup for execution results by proposal ID
+  const executionLookup = useMemo(() => {
     const lookup = {};
-    screeningResults.forEach((result) => {
-      lookup[result.proposalId] = result;
+    executionHistory.forEach((execution) => {
+      lookup[execution.proposalId] = execution;
     });
     return lookup;
-  }, [screeningResults]);
+  }, [executionHistory]);
 
   // Filter proposals by status
   const filteredProposals = useMemo(() => {
     if (statusFilter === "all") return proposals;
-    if (statusFilter === "ai-screened") {
-      return proposals.filter((p) => screeningLookup[p.id]);
+    if (statusFilter === "agent-processed") {
+      return proposals.filter((p) => executionLookup[p.id]);
     }
-    if (statusFilter === "ai-approved") {
-      return proposals.filter((p) => screeningLookup[p.id]?.approved === true);
+    if (statusFilter === "agent-approved") {
+      return proposals.filter((p) => executionLookup[p.id]?.success === true);
     }
-    if (statusFilter === "ai-rejected") {
-      return proposals.filter((p) => screeningLookup[p.id]?.approved === false);
+    if (statusFilter === "agent-failed") {
+      return proposals.filter((p) => executionLookup[p.id]?.success === false);
     }
 
     const statusMap = {
@@ -187,7 +397,7 @@ export function Proposals({ accountId }) {
     return proposals.filter((proposal) =>
       statusMap[statusFilter]?.includes(proposal.status)
     );
-  }, [proposals, statusFilter, screeningLookup]);
+  }, [proposals, statusFilter, executionLookup]);
 
   // Pagination
   const totalPages = Math.ceil(filteredProposals.length / PROPOSALS_PER_PAGE);
@@ -199,12 +409,14 @@ export function Proposals({ accountId }) {
 
   // Get counts for each status
   const statusCounts = useMemo(() => {
-    const aiScreened = proposals.filter((p) => screeningLookup[p.id]).length;
-    const aiApproved = proposals.filter(
-      (p) => screeningLookup[p.id]?.approved === true
+    const agentProcessed = proposals.filter(
+      (p) => executionLookup[p.id]
     ).length;
-    const aiRejected = proposals.filter(
-      (p) => screeningLookup[p.id]?.approved === false
+    const agentApproved = proposals.filter(
+      (p) => executionLookup[p.id]?.success === true
+    ).length;
+    const agentFailed = proposals.filter(
+      (p) => executionLookup[p.id]?.success === false
     ).length;
 
     return {
@@ -214,11 +426,11 @@ export function Proposals({ accountId }) {
       finished: proposals.filter((p) =>
         ["Finished", "Approved", "Rejected"].includes(p.status)
       ).length,
-      "ai-screened": aiScreened,
-      "ai-approved": aiApproved,
-      "ai-rejected": aiRejected,
+      "agent-processed": agentProcessed,
+      "agent-approved": agentApproved,
+      "agent-failed": agentFailed,
     };
-  }, [proposals, screeningLookup]);
+  }, [proposals, executionLookup]);
 
   const handleFilterChange = (newFilter) => {
     setStatusFilter(newFilter);
@@ -232,8 +444,7 @@ export function Proposals({ accountId }) {
 
   const handleRefreshAll = () => {
     refetch();
-    fetchAgentStatus();
-    fetchScreeningResults();
+    fetchAllAgentData();
   };
 
   if (loading) {
@@ -249,232 +460,128 @@ export function Proposals({ accountId }) {
   return (
     <div className="container-fluid">
       <div className="panel">
-        {/* Header with AI Agent Status */}
-        <div className="d-flex justify-content-between align-items-center mb-4">
-          <div>
-            <h2 className="mb-1">📋 Proposals with AI Governance</h2>
-            <p className="text-muted mb-0">
-              Voting Contract: <code>{Constants.VOTING_CONTRACT_ID}</code>
-            </p>
-            {agentStatus && (
-              <div className="mt-1">
-                <small
-                  className={`text-${
-                    agentStatus.autonomousMode ? "success" : "warning"
-                  }`}
-                >
-                  🤖 AI Agent:{" "}
-                  {agentStatus.autonomousMode
-                    ? "Active & Autonomous"
-                    : "Monitoring Only"}{" "}
-                  | Agent: <code>{agentStatus.agentAccount}</code> | Screened:{" "}
-                  {agentStatus.totalScreened}
-                </small>
+        {/* Header with Real-Time Agent Status */}
+        <div className="mb-4">
+          <div className="row">
+            <div className="col-md-8">
+              <h2 className="mb-1">🤖 Autonomous Governance Agent</h2>
+
+              {/* Real-time status */}
+              <div className="row mb-3">
+                <div className="col-md-6">
+                  <div className="card border-primary">
+                    <div className="card-body py-2">
+                      <h6 className="card-title mb-1">📊 Live Statistics</h6>
+                      <div className="row text-center">
+                        <div className="col-4">
+                          <div className="h5 text-primary mb-0">
+                            {autoApprovalStats?.autoApproval?.totalScreened ||
+                              0}
+                          </div>
+                          <small>Screened</small>
+                        </div>
+                        <div className="col-4">
+                          <div className="h5 text-success mb-0">
+                            {autoApprovalStats?.autoApproval?.executed || 0}
+                          </div>
+                          <small>Approved</small>
+                        </div>
+                        <div className="col-4">
+                          <div className="h5 text-danger mb-0">
+                            {autoApprovalStats?.autoApproval?.executionFailed ||
+                              0}
+                          </div>
+                          <small>Failed</small>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="col-md-6">
+                  <div className="card border-success">
+                    <div className="card-body py-2">
+                      <h6 className="card-title mb-1">🔌 Connection Status</h6>
+                      <div className="d-flex justify-content-between align-items-center">
+                        <span>WebSocket:</span>
+                        <span
+                          className={`badge ${
+                            autoApprovalStats?.monitoring?.eventStreamConnected
+                              ? "bg-success"
+                              : "bg-danger"
+                          }`}
+                        >
+                          {autoApprovalStats?.monitoring?.eventStreamConnected
+                            ? "Connected"
+                            : "Disconnected"}
+                        </span>
+                      </div>
+                      <div className="d-flex justify-content-between align-items-center">
+                        <span>Agent:</span>
+                        <span
+                          className={`badge ${
+                            agentStatus?.agentContract?.agentRegistered
+                              ? "bg-success"
+                              : "bg-warning"
+                          }`}
+                        >
+                          {agentStatus?.agentContract?.agentRegistered
+                            ? "Registered"
+                            : "Not Registered"}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
               </div>
-            )}
+            </div>
           </div>
-          <div className="d-flex gap-2">
-            <button
-              className="btn btn-success btn-sm"
-              onClick={testAIAgent}
-              disabled={testLoading}
-            >
-              {testLoading ? "🔄 Testing..." : "🧪 Test AI Agent"}
-            </button>
+
+          {/* Test Buttons */}
+          <div className="d-flex gap-2 flex-wrap">
             <button
               className="btn btn-warning btn-sm"
-              onClick={async () => {
-                console.clear();
-                console.log("🔍 Starting API Debug...");
-
-                // Check API debug endpoint
-                try {
-                  const debugResponse = await fetch(
-                    `${Constants.API_URL}/api/screener/debug`
-                  );
-                  if (debugResponse.ok) {
-                    const debugData = await debugResponse.json();
-                    console.log("🔧 API Configuration:", debugData);
-                  } else {
-                    console.error(
-                      "Debug endpoint failed:",
-                      debugResponse.status,
-                      debugResponse.statusText
-                    );
-                  }
-                } catch (error) {
-                  console.error("Debug endpoint failed:", error);
-                }
-
-                // Test screening endpoint manually
-                try {
-                  console.log("🧪 Testing screening endpoint...");
-
-                  const testData = {
-                    proposalId: "debug-test",
-                    proposal: {
-                      title: "Debug Test Proposal",
-                      description: "Testing from frontend debug button",
-                      proposer_id: "debug.testnet",
-                    },
-                  };
-
-                  console.log("📤 Sending:", testData);
-
-                  const response = await fetch(
-                    `${Constants.API_URL}/api/screener/screen`,
-                    {
-                      method: "POST",
-                      headers: {
-                        Accept: "application/json",
-                        "Content-Type": "application/json",
-                      },
-                      mode: "cors",
-                      body: JSON.stringify(testData),
-                    }
-                  );
-
-                  console.log("📡 Response status:", response.status);
-                  console.log(
-                    "📡 Response headers:",
-                    Object.fromEntries(response.headers)
-                  );
-
-                  const responseText = await response.text();
-                  console.log("📄 Response body:", responseText);
-
-                  if (response.ok) {
-                    try {
-                      const parsed = JSON.parse(responseText);
-                      console.log("✅ Parsed response:", parsed);
-                      alert(
-                        `✅ Screening worked! Result: ${
-                          parsed.approved ? "APPROVED" : "REJECTED"
-                        }\nReasons: ${
-                          parsed.reasons?.join(", ") || "No reasons provided"
-                        }`
-                      );
-                    } catch (parseError) {
-                      console.error("❌ Failed to parse response:", parseError);
-                      alert(
-                        `❌ Got response but couldn't parse JSON: ${responseText.substring(
-                          0,
-                          200
-                        )}`
-                      );
-                    }
-                  } else {
-                    console.error("❌ Screening failed");
-
-                    // Try to parse error response
-                    let errorMessage = responseText;
-                    try {
-                      const errorJson = JSON.parse(responseText);
-                      errorMessage =
-                        errorJson.error || errorJson.message || responseText;
-                    } catch {
-                      // Keep original response text
-                    }
-
-                    alert(
-                      `❌ API Error ${
-                        response.status
-                      }: ${errorMessage.substring(0, 200)}`
-                    );
-                  }
-                } catch (error) {
-                  console.error("❌ Request failed:", error);
-                  alert(`❌ Request failed: ${error.message}`);
-                }
-              }}
+              onClick={createTestProposal}
+              disabled={testLoading || !accountId}
+              title={!accountId ? "Sign in required" : "Create a test proposal"}
             >
-              🔍 Debug API
+              {testLoading ? "🔄 Creating..." : "🧪 Quick Test"}
             </button>
 
-            <button
-              className="btn btn-info btn-sm"
-              onClick={async () => {
-                try {
-                  const envResponse = await fetch(
-                    `${Constants.API_URL}/api/screener/debug`
-                  );
-                  if (envResponse.ok) {
-                    const envData = await envResponse.json();
-                    console.log("🔧 Environment Check:", envData);
-
-                    const issues = [];
-
-                    // Check environment variables
-                    if (envData.environment?.AGENT_ACCOUNT_ID === "❌ Missing")
-                      issues.push("Missing AGENT_ACCOUNT_ID");
-                    if (
-                      envData.environment?.VOTING_CONTRACT_ID === "❌ Missing"
-                    )
-                      issues.push("Missing VOTING_CONTRACT_ID");
-                    if (envData.environment?.ANTHROPIC_API_KEY !== "✅ Set")
-                      issues.push("Missing ANTHROPIC_API_KEY");
-
-                    // Check screener config
-                    if (!envData.screenerConfig?.agentAccountId)
-                      issues.push("Screener missing agentAccountId");
-                    if (!envData.screenerConfig?.votingContractId)
-                      issues.push("Screener missing votingContractId");
-
-                    // Check overall configuration
-                    if (!envData.isConfigured)
-                      issues.push(
-                        "Screener not configured for autonomous mode"
-                      );
-
-                    if (issues.length > 0) {
-                      alert(
-                        `⚠️ Configuration Issues Found:\n\n${issues.join(
-                          "\n"
-                        )}\n\n` +
-                          `Current Status:\n` +
-                          `- Autonomous Mode: ${
-                            envData.screenerConfig?.autonomousMode
-                              ? "✅ Active"
-                              : "❌ Disabled"
-                          }\n` +
-                          `- Agent: ${
-                            envData.screenerConfig?.agentAccountId ||
-                            "❌ Missing"
-                          }\n` +
-                          `- Contract: ${
-                            envData.screenerConfig?.votingContractId ||
-                            "❌ Missing"
-                          }\n` +
-                          `- API Key: ${
-                            envData.environment?.ANTHROPIC_API_KEY ||
-                            "❌ Missing"
-                          }\n\n` +
-                          `Check your .env.development.local file and restart server!`
-                      );
-                    } else {
-                      alert(
-                        `✅ Configuration Looks Good!\n\n` +
-                          `✅ Autonomous Mode: Active\n` +
-                          `✅ Agent: ${envData.screenerConfig.agentAccountId}\n` +
-                          `✅ Contract: ${envData.screenerConfig.votingContractId}\n` +
-                          `✅ API Key: Configured\n\n` +
-                          `🚀 AI agent ready for action!`
-                      );
-                    }
-                  }
-                } catch (error) {
-                  alert(`❌ Could not check configuration: ${error.message}`);
-                }
-              }}
-            >
-              🔧 Check Config
-            </button>
             <button
               className="btn btn-outline-primary btn-sm"
+              onClick={testAgentApproval}
+              disabled={testLoading}
+              title="Test agent contract approval functionality"
+            >
+              {testLoading ? "🔄 Testing..." : "🚀 Test Agent Approval"}
+            </button>
+
+            <button
+              className="btn btn-outline-secondary btn-sm"
+              onClick={forceProcessProposal}
+              disabled={testLoading}
+              title="Force process a specific proposal ID"
+            >
+              {testLoading ? "🔄 Processing..." : "⚡ Force Process"}
+            </button>
+
+            <button
+              className="btn btn-outline-info btn-sm"
+              onClick={debugAgentConfig}
+              disabled={testLoading}
+              title="Comprehensive agent configuration check"
+            >
+              {testLoading ? "🔄 Checking..." : "🔍 Debug Config"}
+            </button>
+
+            <button
+              className="btn btn-outline-secondary btn-sm"
               onClick={handleRefreshAll}
               disabled={loading}
+              title="Refresh all data"
             >
-              🔄 Refresh
+              ♻️ Refresh
             </button>
           </div>
         </div>
@@ -486,115 +593,79 @@ export function Proposals({ accountId }) {
               testResult.success ? "alert-success" : "alert-danger"
             } mb-4`}
           >
-            <h6>🧪 AI Agent Test Results ({testResult.timestamp})</h6>
+            <h6>
+              🧪{" "}
+              {testResult.type === "proposal-creation"
+                ? "Proposal Creation"
+                : testResult.type === "agent-approval"
+                ? "Agent Approval"
+                : "Test"}
+              Results ({testResult.timestamp})
+            </h6>
+
             {testResult.success ? (
               <div>
                 <p>
-                  <strong>✅ Agent Status:</strong>{" "}
-                  {testResult.status?.autonomousMode
-                    ? "Autonomous"
-                    : "Monitor Only"}{" "}
-                  | Total Screened: {testResult.status?.totalScreened || 0}
+                  <strong>✅ Success:</strong> {testResult.message}
                 </p>
-                <p>
-                  <strong>✅ Connection:</strong>{" "}
-                  {testResult.connection?.success ? "Connected" : "Failed"}
-                </p>
-                {testResult.screening && (
+                {testResult.proposalId && (
                   <p>
-                    <strong>✅ Screening Test:</strong> Proposal #
-                    {testResult.screening.proposalId} -
-                    {testResult.screening.error ? (
-                      <span className="text-danger">
-                        ERROR: {testResult.screening.message}
-                      </span>
-                    ) : (
-                      <>
-                        {testResult.screening.approved
-                          ? "APPROVED"
-                          : "REJECTED"}{" "}
-                        | Reasons:{" "}
-                        {testResult.screening.reasons?.join(", ") ||
-                          "No reasons provided"}
-                      </>
-                    )}
+                    <strong>📝 Proposal ID:</strong> {testResult.proposalId}
                   </p>
                 )}
-                <small className="text-success">
-                  🎉{" "}
-                  {testResult.screening?.error
-                    ? "Tests completed with some errors"
-                    : "All systems operational!"}
-                </small>
+                {testResult.txHash && (
+                  <p>
+                    <strong>🔗 Transaction:</strong>
+                    <code className="ms-1">{testResult.txHash}</code>
+                  </p>
+                )}
+                {testResult.type === "proposal-creation" && (
+                  <small className="text-success">
+                    🎯 Monitor the console logs to see the agent automatically
+                    detect, screen, and approve this proposal!
+                  </small>
+                )}
               </div>
             ) : (
               <div>
                 <p>
-                  <strong>❌ Test Failed:</strong> {testResult.error}
+                  <strong>❌ Error:</strong> {testResult.error}
                 </p>
-                <small>
-                  Check your network connection and agent deployment.
-                </small>
+                {testResult.agentValid === false && (
+                  <small className="text-danger">
+                    The agent contract setup is invalid. Check the debug config
+                    for details.
+                  </small>
+                )}
               </div>
             )}
           </div>
         )}
 
-        {/* Filter Buttons with AI Filters */}
-        <div className="d-flex flex-wrap gap-2 mb-4">
-          <button
-            className={`btn ${
-              statusFilter === "all" ? "btn-primary" : "btn-outline-primary"
-            } btn-sm`}
-            onClick={() => handleFilterChange("all")}
-          >
-            All ({statusCounts.all})
-          </button>
-          <button
-            className={`btn ${
-              statusFilter === "ai-screened" ? "btn-info" : "btn-outline-info"
-            } btn-sm`}
-            onClick={() => handleFilterChange("ai-screened")}
-          >
-            🤖 AI Screened ({statusCounts["ai-screened"]})
-          </button>
-          <button
-            className={`btn ${
-              statusFilter === "ai-approved"
-                ? "btn-success"
-                : "btn-outline-success"
-            } btn-sm`}
-            onClick={() => handleFilterChange("ai-approved")}
-          >
-            🤖✅ Approved ({statusCounts["ai-approved"]})
-          </button>
-          <button
-            className={`btn ${
-              statusFilter === "ai-rejected"
-                ? "btn-danger"
-                : "btn-outline-danger"
-            } btn-sm`}
-            onClick={() => handleFilterChange("ai-rejected")}
-          >
-            🤖❌ Rejected ({statusCounts["ai-rejected"]})
-          </button>
-          <button
-            className={`btn ${
-              statusFilter === "active" ? "btn-success" : "btn-outline-success"
-            } btn-sm`}
-            onClick={() => handleFilterChange("active")}
-          >
-            🗳️ Active ({statusCounts.active})
-          </button>
-          <button
-            className={`btn ${
-              statusFilter === "pending" ? "btn-warning" : "btn-outline-warning"
-            } btn-sm`}
-            onClick={() => handleFilterChange("pending")}
-          >
-            ⏳ Pending ({statusCounts.pending})
-          </button>
-        </div>
+        {/* Recent Activity */}
+        {executionHistory.length > 0 && (
+          <div className="alert alert-info mb-4">
+            <h6>📋 Recent Agent Activity</h6>
+            <div className="row">
+              {executionHistory.slice(0, 3).map((execution, i) => (
+                <div key={i} className="col-md-4">
+                  <div className="d-flex justify-content-between align-items-center">
+                    <span>Proposal {execution.proposalId}</span>
+                    <span
+                      className={`badge ${
+                        execution.success ? "bg-success" : "bg-danger"
+                      }`}
+                    >
+                      {execution.success ? "✅ Approved" : "❌ Failed"}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <hr />
 
         {/* Error Message */}
         {error && (
@@ -603,6 +674,39 @@ export function Proposals({ accountId }) {
             <p className="mb-0">{error}</p>
           </div>
         )}
+
+        {/* Filter Tabs */}
+        <div className="mb-3">
+          <ul className="nav nav-pills nav-fill">
+            {[
+              { key: "all", label: "All", count: statusCounts.all },
+              { key: "pending", label: "Pending", count: statusCounts.pending },
+              { key: "active", label: "Voting", count: statusCounts.active },
+              {
+                key: "agent-processed",
+                label: "Agent Processed",
+                count: statusCounts["agent-processed"],
+              },
+              {
+                key: "agent-approved",
+                label: "Agent Approved",
+                count: statusCounts["agent-approved"],
+              },
+            ].map(({ key, label, count }) => (
+              <li key={key} className="nav-item">
+                <button
+                  className={`nav-link ${statusFilter === key ? "active" : ""}`}
+                  onClick={() => handleFilterChange(key)}
+                >
+                  {label}{" "}
+                  {count > 0 && (
+                    <span className="badge bg-secondary ms-1">{count}</span>
+                  )}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
 
         {/* Proposals List */}
         {filteredProposals.length === 0 ? (
@@ -616,53 +720,52 @@ export function Proposals({ accountId }) {
                   "No proposals are currently accepting votes."}
                 {statusFilter === "pending" &&
                   "No proposals are awaiting review."}
-                {statusFilter === "ai-screened" &&
-                  "No proposals have been screened by AI yet."}
+                {statusFilter === "agent-processed" &&
+                  "No proposals have been processed by the agent yet."}
                 {statusFilter === "all" &&
-                  "No proposals have been created yet. Be the first to submit one!"}
+                  "No proposals have been created yet. Create a test proposal to see the agent in action!"}
               </p>
             </div>
           </div>
         ) : (
           <>
-            {/* Proposals */}
             <div className="mb-4">
               {paginatedProposals.map((proposal) => (
                 <ProposalCard
                   key={`${proposal.contractId}-${proposal.id}`}
                   proposal={proposal}
                   compact={false}
-                  screeningResult={screeningLookup[proposal.id]}
+                  agentExecution={executionLookup[proposal.id]}
                 />
               ))}
             </div>
 
             {/* Pagination */}
             {totalPages > 1 && (
-              <div className="d-flex justify-content-center">
+              <div className="d-flex justify-content-center mt-4">
                 <nav aria-label="Proposals pagination">
-                  <ul className="pagination pagination-sm">
-                    {currentPage > 1 && (
-                      <li className="page-item">
-                        <button
-                          className="page-link"
-                          onClick={() => handlePageChange(currentPage - 1)}
-                        >
-                          Previous
-                        </button>
-                      </li>
-                    )}
+                  <ul className="pagination pagination-sm mb-0">
+                    <li
+                      className={`page-item ${
+                        currentPage === 1 ? "disabled" : ""
+                      }`}
+                    >
+                      <button
+                        className="page-link"
+                        onClick={() => handlePageChange(currentPage - 1)}
+                        disabled={currentPage === 1}
+                      >
+                        &laquo; Previous
+                      </button>
+                    </li>
 
                     {Array.from({ length: Math.min(totalPages, 5) }, (_, i) => {
-                      let page;
-                      if (totalPages <= 5) {
-                        page = i + 1;
-                      } else if (currentPage <= 3) {
-                        page = i + 1;
-                      } else if (currentPage >= totalPages - 2) {
-                        page = totalPages - 4 + i;
-                      } else {
-                        page = currentPage - 2 + i;
+                      let page = i + 1;
+                      if (totalPages > 5) {
+                        if (currentPage <= 3) page = i + 1;
+                        else if (currentPage >= totalPages - 2)
+                          page = totalPages - 4 + i;
+                        else page = currentPage - 2 + i;
                       }
 
                       return (
@@ -682,22 +785,25 @@ export function Proposals({ accountId }) {
                       );
                     })}
 
-                    {currentPage < totalPages && (
-                      <li className="page-item">
-                        <button
-                          className="page-link"
-                          onClick={() => handlePageChange(currentPage + 1)}
-                        >
-                          Next
-                        </button>
-                      </li>
-                    )}
+                    <li
+                      className={`page-item ${
+                        currentPage === totalPages ? "disabled" : ""
+                      }`}
+                    >
+                      <button
+                        className="page-link"
+                        onClick={() => handlePageChange(currentPage + 1)}
+                        disabled={currentPage === totalPages}
+                      >
+                        Next &raquo;
+                      </button>
+                    </li>
                   </ul>
                 </nav>
               </div>
             )}
 
-            <div className="text-center text-muted small">
+            <div className="text-center text-muted small mt-3">
               Showing {startIndex + 1}-
               {Math.min(
                 startIndex + PROPOSALS_PER_PAGE,

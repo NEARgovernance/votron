@@ -10,8 +10,8 @@ interface Screener {
   ) => Promise<{
     approved: boolean;
     reasons: string[];
-    executionResult?: { transactionHash?: string };
-    timestamp: string | number;
+    timestamp: string;
+    executionResult?: { transactionHash?: string; action: string };
   }>;
   approveProposal: (
     proposalId: string
@@ -20,14 +20,20 @@ interface Screener {
     proposalId: string;
     approved: boolean;
     reasons: string[];
+    timestamp: string;
     executionResult?: { transactionHash?: string };
-    timestamp: string | number;
   }>;
+  getScreeningResult: (proposalId: string) => any;
   autonomousMode: boolean;
   agentAccountId?: string;
   votingContractId?: string;
   customContractId?: string;
   testContractConnection?: () => Promise<boolean>;
+  getExecutionStatus: (proposalId: string) => any;
+  isProposalExecuted: (proposalId: string) => boolean;
+  getRecentExecutions: (limit?: number) => any[];
+  getExecutionStats: () => any;
+  clearHistory: () => void;
 }
 
 export default function createScreenerRoutes(screener: Screener) {
@@ -41,15 +47,6 @@ export default function createScreenerRoutes(screener: Screener) {
       }
 
       const result = await screener.screenProposal(proposalId, proposal);
-
-      // Auto-execute if configured
-      if (screener.autonomousMode && result.approved) {
-        try {
-          await screener.approveProposal(proposalId);
-        } catch (err) {
-          console.error("Auto-approval failed:", err);
-        }
-      }
 
       return c.json({
         proposalId,
@@ -66,21 +63,64 @@ export default function createScreenerRoutes(screener: Screener) {
     }
   });
 
+  // Manual execution endpoint
+  proposalScreener.post("/execute/:proposalId", async (c) => {
+    try {
+      const proposalId = c.req.param("proposalId");
+      const { force } = await c.req.json().catch(() => ({ force: false }));
+
+      // Check if proposal was screened and approved
+      const screeningResult = screener.getScreeningResult(proposalId);
+      if (!screeningResult && !force) {
+        return c.json({ error: "Proposal not screened" }, 400);
+      }
+
+      if (!screeningResult?.approved && !force) {
+        return c.json(
+          {
+            error: "Proposal was not approved. Use force=true to override.",
+            screeningResult,
+          },
+          400
+        );
+      }
+
+      // Check if already executed
+      if (screener.isProposalExecuted(proposalId)) {
+        const existingResult = screener.getExecutionStatus(proposalId);
+        return c.json(
+          {
+            error: "Proposal already executed",
+            execution: existingResult,
+          },
+          400
+        );
+      }
+
+      const executionResult = await screener.approveProposal(proposalId);
+
+      return c.json({
+        success: true,
+        proposalId,
+        forced: !!force,
+        execution: {
+          transactionHash: executionResult.transactionHash,
+          timestamp: new Date().toISOString(),
+        },
+      });
+    } catch (error: any) {
+      console.error("Manual execution failed:", error);
+      return c.json({ error: error.message }, 500);
+    }
+  });
+
   // System status
   proposalScreener.get("/status", async (c) => {
     try {
-      let trackingStats = null;
-      try {
-        const statsResponse = await fetch(
-          `${process.env.API_URL}/api/proposals/stats` ||
-            "http://localhost:3000/api/proposals/stats"
-        );
-        if (statsResponse.ok) {
-          trackingStats = (await statsResponse.json()).stats;
-        }
-      } catch {
-        // Ignore tracking stats errors
-      }
+      const screeningStats = screener.getScreeningHistory();
+      const executionStats = screener.getExecutionStats();
+      const approved = screeningStats.filter((r) => r.approved).length;
+      const notApproved = screeningStats.length - approved;
 
       return c.json({
         autonomousMode: screener.autonomousMode,
@@ -91,8 +131,21 @@ export default function createScreenerRoutes(screener: Screener) {
         agentAccount: screener.agentAccountId,
         customContract: screener.customContractId,
         mode: screener.customContractId ? "custom_contract" : "tee_fallback",
-        totalScreened: screener.getScreeningHistory().length,
-        tracking: trackingStats,
+        screening: {
+          totalScreened: screeningStats.length,
+          breakdown: { approved, notApproved },
+          lastScreened:
+            screeningStats.length > 0
+              ? screeningStats[screeningStats.length - 1].timestamp
+              : null,
+        },
+        execution: {
+          totalExecutions: executionStats.total,
+          successful: executionStats.successful,
+          failed: executionStats.failed,
+          pending: executionStats.pending,
+          lastExecution: executionStats.lastExecution,
+        },
       });
     } catch (error) {
       return c.json({
@@ -112,9 +165,22 @@ export default function createScreenerRoutes(screener: Screener) {
         proposalId: r.proposalId,
         approved: r.approved,
         reasons: r.reasons,
-        executed: !!r.executionResult,
+        executed: screener.isProposalExecuted(r.proposalId),
         timestamp: r.timestamp,
       })),
+    });
+  });
+
+  // Get execution history
+  proposalScreener.get("/executions", (c) => {
+    const executions = screener.getRecentExecutions(20);
+    const stats = screener.getExecutionStats();
+
+    return c.json({
+      executions,
+      totalExecutions: stats.total,
+      successfulExecutions: stats.successful,
+      failedExecutions: stats.failed,
     });
   });
 
@@ -139,112 +205,7 @@ export default function createScreenerRoutes(screener: Screener) {
     }
   });
 
-  // Debug endpoint for Anthropic API
-  proposalScreener.get("/api/debug/anthropic", async (c) => {
-    console.log("🧪 DEBUG: Anthropic test endpoint called");
-
-    const debugInfo: {
-      timestamp: string;
-      environment: {
-        anthropicKeyExists: boolean;
-        anthropicKeyLength: number;
-        anthropicKeyPreview: string;
-        agentAccountId: string;
-        votingContractId: string;
-        allAnthropicKeys: string[];
-        allAgentKeys: string[];
-        allNearKeys: string[];
-      };
-      apiTest: any;
-      error: string | null;
-    } = {
-      timestamp: new Date().toISOString(),
-      environment: {
-        anthropicKeyExists: !!process.env.ANTHROPIC_API_KEY,
-        anthropicKeyLength: process.env.ANTHROPIC_API_KEY?.length || 0,
-        anthropicKeyPreview: process.env.ANTHROPIC_API_KEY
-          ? process.env.ANTHROPIC_API_KEY.substring(0, 12) + "..."
-          : "MISSING",
-        agentAccountId: process.env.AGENT_ACCOUNT_ID || "MISSING",
-        votingContractId: process.env.VOTING_CONTRACT_ID || "MISSING",
-        allAnthropicKeys: Object.keys(process.env).filter((key) =>
-          key.toLowerCase().includes("anthropic")
-        ),
-        allAgentKeys: Object.keys(process.env).filter((key) =>
-          key.toLowerCase().includes("agent")
-        ),
-        allNearKeys: Object.keys(process.env).filter((key) =>
-          key.toLowerCase().includes("near")
-        ),
-      },
-      apiTest: null,
-      error: null,
-    };
-
-    // If API key exists, test it
-    if (process.env.ANTHROPIC_API_KEY) {
-      try {
-        console.log("🧪 DEBUG: Testing Anthropic API call...");
-
-        const response = await fetch("https://api.anthropic.com/v1/messages", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-api-key": process.env.ANTHROPIC_API_KEY,
-            "anthropic-version": "2023-06-01",
-          },
-          body: JSON.stringify({
-            model: "claude-3-5-sonnet-20241022",
-            max_tokens: 10,
-            messages: [
-              {
-                role: "user",
-                content: 'Say "test successful"',
-              },
-            ],
-          }),
-        });
-
-        console.log(
-          "🧪 DEBUG: Anthropic API response status:",
-          response.status
-        );
-
-        if (response.ok) {
-          const data = await response.json();
-          debugInfo.apiTest = {
-            success: true,
-            status: response.status,
-            responsePreview: data.content?.[0]?.text || "No content",
-            model: data.model,
-            usage: data.usage,
-          };
-          console.log("🧪 DEBUG: API test successful");
-        } else {
-          const errorText = await response.text();
-          debugInfo.apiTest = {
-            success: false,
-            status: response.status,
-            statusText: response.statusText,
-            error: errorText.substring(0, 200),
-          };
-          console.log("🧪 DEBUG: API test failed:", response.status);
-        }
-      } catch (error) {
-        const errorMessage =
-          error instanceof Error ? error.message : String(error);
-        console.error("🧪 DEBUG: API test error:", errorMessage);
-        debugInfo.error = `API test failed: ${errorMessage}`;
-      }
-    } else {
-      debugInfo.error = "ANTHROPIC_API_KEY not found in environment variables";
-      console.log("🧪 DEBUG: No API key found");
-    }
-
-    return c.json(debugInfo);
-  });
-
-  // Test contract connection
+  // Test connection
   proposalScreener.get("/test-connection", async (c) => {
     try {
       if (!screener.testContractConnection) {
@@ -316,6 +277,125 @@ export default function createScreenerRoutes(screener: Screener) {
         500
       );
     }
+  });
+
+  // Auto-approval stats endpoint
+  proposalScreener.get("/auto-approval-stats", (c) => {
+    const screeningHistory = screener.getScreeningHistory();
+    const approved = screeningHistory.filter((r) => r.approved).length;
+    const rejected = screeningHistory.length - approved;
+    const recentExecutions = screener.getRecentExecutions(5);
+    const executionStats = screener.getExecutionStats();
+
+    const autoApprovalStats = {
+      totalScreened: screeningHistory.length,
+      approved,
+      rejected,
+      executed: executionStats.successful,
+      executionFailed: executionStats.failed,
+      pending: approved - executionStats.successful,
+      lastActivity:
+        screeningHistory.length > 0
+          ? screeningHistory[screeningHistory.length - 1].timestamp
+          : null,
+      recentExecutions,
+    };
+
+    return c.json({
+      autoApproval: autoApprovalStats,
+      monitoring: {
+        eventStreamConnected: true, // This is handled in index.ts
+        isConnecting: false,
+        reconnectAttempts: 0,
+      },
+    });
+  });
+
+  // Execution history endpoint
+  proposalScreener.get("/execution-history", (c) => {
+    const recentExecutions = screener.getRecentExecutions(20);
+    const stats = screener.getExecutionStats();
+
+    return c.json({
+      executions: recentExecutions,
+      totalExecutions: stats.total,
+      successfulExecutions: stats.successful,
+      failedExecutions: stats.failed,
+    });
+  });
+
+  // Debug endpoint for Anthropic API
+  proposalScreener.get("/api/debug/anthropic", async (c) => {
+    console.log("🧪 DEBUG: Anthropic test endpoint called");
+
+    const debugInfo = {
+      timestamp: new Date().toISOString(),
+      environment: {
+        anthropicKeyExists: !!process.env.ANTHROPIC_API_KEY,
+        anthropicKeyLength: process.env.ANTHROPIC_API_KEY?.length || 0,
+        anthropicKeyPreview: process.env.ANTHROPIC_API_KEY
+          ? process.env.ANTHROPIC_API_KEY.substring(0, 12) + "..."
+          : "MISSING",
+        agentAccountId: process.env.AGENT_ACCOUNT_ID || "MISSING",
+        votingContractId: process.env.VOTING_CONTRACT_ID || "MISSING",
+        allAnthropicKeys: Object.keys(process.env).filter((key) =>
+          key.toLowerCase().includes("anthropic")
+        ),
+        allAgentKeys: Object.keys(process.env).filter((key) =>
+          key.toLowerCase().includes("agent")
+        ),
+        allNearKeys: Object.keys(process.env).filter((key) =>
+          key.toLowerCase().includes("near")
+        ),
+      },
+      apiTest: null as any,
+      error: null as string | null,
+    };
+
+    // If API key exists, test it
+    if (process.env.ANTHROPIC_API_KEY) {
+      try {
+        console.log("🧪 DEBUG: Testing Anthropic API call...");
+
+        const response = await fetch("https://api.anthropic.com/v1/messages", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-api-key": process.env.ANTHROPIC_API_KEY,
+            "anthropic-version": "2023-06-01",
+          },
+          body: JSON.stringify({
+            model: "claude-3-5-sonnet-20241022",
+            max_tokens: 10,
+            messages: [{ role: "user", content: 'Say "test successful"' }],
+          }),
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          debugInfo.apiTest = {
+            success: true,
+            status: response.status,
+            responsePreview: data.content?.[0]?.text || "No content",
+          };
+        } else {
+          const errorText = await response.text();
+          debugInfo.apiTest = {
+            success: false,
+            status: response.status,
+            error: errorText.substring(0, 200),
+          };
+        }
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : String(error);
+        debugInfo.error = `API test failed: ${errorMessage}`;
+      }
+    } else {
+      debugInfo.error = "ANTHROPIC_API_KEY not found in environment variables";
+    }
+
+    return c.json(debugInfo);
   });
 
   // Debug configuration
@@ -403,6 +483,15 @@ export default function createScreenerRoutes(screener: Screener) {
         500
       );
     }
+  });
+
+  // Clear history
+  proposalScreener.delete("/history", (c) => {
+    screener.clearHistory();
+    return c.json({
+      message: "History cleared",
+      timestamp: new Date().toISOString(),
+    });
   });
 
   return proposalScreener;

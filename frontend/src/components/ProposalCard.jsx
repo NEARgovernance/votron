@@ -1,4 +1,4 @@
-export function ProposalCard({ proposal, compact = false, screeningResult }) {
+export function ProposalCard({ proposal, compact = false, agentExecution }) {
   const getStatusBadge = (status) => {
     const statusConfig = {
       Created: { class: "bg-warning text-dark", text: "Pending" },
@@ -16,18 +16,24 @@ export function ProposalCard({ proposal, compact = false, screeningResult }) {
     return <span className={`badge ${config.class}`}>{config.text}</span>;
   };
 
-  const getAIScreeningBadge = (result) => {
-    if (!result) {
+  const getAgentExecutionBadge = (execution) => {
+    if (!execution) {
       return (
-        <span className="badge bg-light text-dark ms-2">🤖 Not Screened</span>
+        <span className="badge bg-light text-dark ms-2">🤖 Not Processed</span>
       );
+    }
+
+    if (execution.executed === false) {
+      return <span className="badge bg-danger ms-2">🤖 Processing Failed</span>;
     }
 
     return (
       <span
-        className={`badge ${result.approved ? "bg-success" : "bg-danger"} ms-2`}
+        className={`badge ${
+          execution.success ? "bg-success" : "bg-warning"
+        } ms-2`}
       >
-        🤖 {result.approved ? "AI Approved" : "AI Rejected"}
+        🤖 {execution.success ? "Auto-Approved" : "Error"}
       </span>
     );
   };
@@ -48,7 +54,7 @@ export function ProposalCard({ proposal, compact = false, screeningResult }) {
             <h6 className={`card-title ${compact ? "mb-1" : "mb-2"}`}>
               #{proposal.id}: {proposal.title}
               <span className="ms-2">{getStatusBadge(proposal.status)}</span>
-              {getAIScreeningBadge(screeningResult)}
+              {getAgentExecutionBadge(agentExecution)}
             </h6>
 
             <div className="text-muted small mb-1">
@@ -60,67 +66,103 @@ export function ProposalCard({ proposal, compact = false, screeningResult }) {
               {proposal.factoryName ? <> ({proposal.factoryName})</> : null}
             </div>
 
-            {/* AI SCREENING DETAILS */}
-            {screeningResult && !compact && (
+            {/* AGENT EXECUTION DETAILS */}
+            {agentExecution && !compact && (
               <div className="mb-2">
                 <div
                   className={`alert ${
-                    screeningResult.approved ? "alert-success" : "alert-danger"
+                    agentExecution.success ? "alert-success" : "alert-danger"
                   } py-2 mb-2`}
                 >
                   <div className="d-flex justify-content-between align-items-start">
                     <div className="flex-grow-1">
-                      <strong>🤖 AI Screening Result:</strong>
+                      <strong>🤖 Shade Agent Processing:</strong>
                       <span
                         className={`badge ${
-                          screeningResult.approved ? "bg-success" : "bg-danger"
+                          agentExecution.success ? "bg-success" : "bg-danger"
                         } ms-2`}
                       >
-                        {screeningResult.approved ? "APPROVED" : "REJECTED"}
+                        {agentExecution.executed === false
+                          ? "PROCESSING FAILED"
+                          : agentExecution.success
+                          ? "AUTO-APPROVED"
+                          : "ERROR"}
                       </span>
                       <br />
-                      <small>
-                        <strong>Reasons:</strong>{" "}
-                        {Array.isArray(screeningResult.reasons)
-                          ? screeningResult.reasons.join(" • ")
-                          : "No reasons provided"}
-                      </small>
-                      <br />
-                      <small className="text-muted">
-                        Screened: {formatTimestamp(screeningResult.timestamp)}
-                      </small>
-                    </div>
-                  </div>
 
-                  {/* Show execution result if autonomous action was taken */}
-                  {screeningResult.executionResult && (
-                    <div className="mt-2 pt-2 border-top">
-                      <small>
-                        <strong>🤖 Autonomous Action:</strong>{" "}
-                        {screeningResult.executionResult.action}
-                        {screeningResult.executionResult.transactionHash && (
-                          <>
-                            {" | "}
+                      {/* Execution method */}
+                      {agentExecution.executionMethod && (
+                        <>
+                          <small>
+                            <strong>Method:</strong>{" "}
+                            {agentExecution.executionMethod.replace("_", " ")}
+                          </small>
+                          <br />
+                        </>
+                      )}
+
+                      {/* Error details */}
+                      {agentExecution.executionError && (
+                        <>
+                          <small>
+                            <strong>Error:</strong>{" "}
+                            {agentExecution.executionError}
+                          </small>
+                          <br />
+                        </>
+                      )}
+
+                      {/* Transaction hash */}
+                      {agentExecution.executionTxHash && (
+                        <>
+                          <small>
+                            <strong>Transaction:</strong>{" "}
                             <a
-                              href={`https://explorer.testnet.near.org/transactions/${screeningResult.executionResult.transactionHash}`}
+                              href={`https://explorer.testnet.near.org/transactions/${agentExecution.executionTxHash}`}
                               target="_blank"
                               rel="noopener noreferrer"
                               className="text-decoration-none"
                             >
-                              View Transaction ↗
+                              {agentExecution.executionTxHash.substring(0, 12)}
+                              ... ↗
                             </a>
-                          </>
+                          </small>
+                          <br />
+                        </>
+                      )}
+
+                      {/* Timestamp */}
+                      <small className="text-muted">
+                        {agentExecution.executed === false
+                          ? "Attempted"
+                          : "Executed"}
+                        :{" "}
+                        {formatTimestamp(
+                          agentExecution.executedAt ||
+                            agentExecution.attemptedAt
                         )}
-                        <br />
-                        <span className="text-muted">
-                          Executed:{" "}
-                          {formatTimestamp(
-                            screeningResult.executionResult.timestamp
-                          )}
-                        </span>
                       </small>
+
+                      {/* Agent logs if available */}
+                      {agentExecution.logs &&
+                        agentExecution.logs.length > 0 && (
+                          <div className="mt-2 pt-2 border-top">
+                            <small>
+                              <strong>📋 Agent Logs:</strong>
+                              <div className="mt-1">
+                                {agentExecution.logs
+                                  .slice(0, 3)
+                                  .map((log, i) => (
+                                    <div key={i} className="text-muted small">
+                                      • {log}
+                                    </div>
+                                  ))}
+                              </div>
+                            </small>
+                          </div>
+                        )}
                     </div>
-                  )}
+                  </div>
                 </div>
               </div>
             )}
@@ -145,6 +187,25 @@ export function ProposalCard({ proposal, compact = false, screeningResult }) {
                 {proposal.deadline && (
                   <span>Deadline: {formatTimestamp(proposal.deadline)}</span>
                 )}
+              </div>
+            )}
+
+            {/* Agent status indicators for compact view */}
+            {compact && agentExecution && (
+              <div className="mt-2">
+                <small className="text-muted">
+                  🤖 Agent:{" "}
+                  {agentExecution.success ? "✅ Approved" : "❌ Failed"}
+                  {agentExecution.executionTxHash && (
+                    <>
+                      {" "}
+                      | TX:{" "}
+                      <code>
+                        {agentExecution.executionTxHash.substring(0, 8)}...
+                      </code>
+                    </>
+                  )}
+                </small>
               </div>
             )}
           </div>

@@ -3,72 +3,82 @@ import { Constants } from "../hooks/constants.js";
 
 export function Settings() {
   const [agentStatus, setAgentStatus] = useState(null);
-  const [agentBalance, setAgentBalance] = useState(null);
-  const [agentInfo, setAgentInfo] = useState(null);
-  const [screeningStats, setScreeningStats] = useState(null);
+  const [autoApprovalStats, setAutoApprovalStats] = useState(null);
+  const [executionHistory, setExecutionHistory] = useState(null);
+  const [websocketStatus, setWebsocketStatus] = useState(null);
   const [loading, setLoading] = useState(false);
   const [testResults, setTestResults] = useState(null);
 
   useEffect(() => {
     fetchAllAgentData();
+
+    // Auto-refresh every 10 seconds for live monitoring
+    const interval = setInterval(fetchAllAgentData, 10000);
+    return () => clearInterval(interval);
   }, []);
 
   const fetchAllAgentData = async () => {
     await Promise.all([
       fetchAgentStatus(),
-      fetchAgentBalance(),
-      fetchAgentInfo(),
-      fetchScreeningStats(),
+      fetchAutoApprovalStats(),
+      fetchExecutionHistory(),
+      fetchWebsocketStatus(),
     ]);
   };
 
   const fetchAgentStatus = async () => {
     try {
-      const response = await fetch(`${Constants.API_URL}/api/screener/status`);
-      const data = await response.json();
-      setAgentStatus(data);
+      const response = await fetch(
+        `${Constants.API_URL}/api/screener/agent-status`
+      );
+      if (response.ok) {
+        const data = await response.json();
+        setAgentStatus(data);
+      }
     } catch (error) {
       console.error("Failed to fetch agent status:", error);
     }
   };
 
-  const fetchAgentBalance = async () => {
-    try {
-      const response = await fetch(`${Constants.API_URL}/api/screener/balance`);
-      const data = await response.json();
-      setAgentBalance(data);
-    } catch (error) {
-      console.error("Failed to fetch agent balance:", error);
-    }
-  };
-
-  const fetchAgentInfo = async () => {
+  const fetchAutoApprovalStats = async () => {
     try {
       const response = await fetch(
-        `${Constants.API_URL}/api/screener/agent-info`
+        `${Constants.API_URL}/api/screener/auto-approval-stats`
       );
-      const data = await response.json();
-      setAgentInfo(data);
+      if (response.ok) {
+        const data = await response.json();
+        setAutoApprovalStats(data);
+      }
     } catch (error) {
-      console.error("Failed to fetch agent info:", error);
+      console.error("Failed to fetch auto-approval stats:", error);
     }
   };
 
-  const fetchScreeningStats = async () => {
+  const fetchExecutionHistory = async () => {
     try {
-      const response = await fetch(`${Constants.API_URL}/api/screener/results`);
-      const data = await response.json();
-      const results = data.results || [];
-
-      const stats = {
-        total: results.length,
-        approved: results.filter((r) => r.approved).length,
-        rejected: results.filter((r) => !r.approved).length,
-        withExecution: results.filter((r) => r.executionResult).length,
-      };
-      setScreeningStats(stats);
+      const response = await fetch(
+        `${Constants.API_URL}/api/screener/execution-history`
+      );
+      if (response.ok) {
+        const data = await response.json();
+        setExecutionHistory(data);
+      }
     } catch (error) {
-      console.error("Failed to fetch screening stats:", error);
+      console.error("Failed to fetch execution history:", error);
+    }
+  };
+
+  const fetchWebsocketStatus = async () => {
+    try {
+      const response = await fetch(
+        `${Constants.API_URL}/api/debug/websocket-status`
+      );
+      if (response.ok) {
+        const data = await response.json();
+        setWebsocketStatus(data);
+      }
+    } catch (error) {
+      console.error("Failed to fetch WebSocket status:", error);
     }
   };
 
@@ -89,7 +99,7 @@ export function Settings() {
         results.tests.push({
           name: "API Health Check",
           status: "success",
-          message: `Server running, uptime: ${healthData.uptime}s`,
+          message: `Server running, uptime: ${healthData.uptime}s, screener: ${healthData.screener?.status}`,
         });
       } catch (error) {
         results.tests.push({
@@ -99,105 +109,132 @@ export function Settings() {
         });
       }
 
-      // Test 2: Agent Status
+      // Test 2: Agent Contract Status
       try {
         const statusResponse = await fetch(
-          `${Constants.API_URL}/api/screener/status`
+          `${Constants.API_URL}/api/screener/agent-status`
         );
         const statusData = await statusResponse.json();
         results.tests.push({
-          name: "Agent Status",
-          status: "success",
-          message: `Mode: ${
-            statusData.autonomousMode ? "Autonomous" : "Monitor"
-          }, Screened: ${statusData.totalScreened}`,
+          name: "Agent Contract Status",
+          status: statusData.agentContract?.agentRegistered
+            ? "success"
+            : "warning",
+          message: `Registered: ${
+            statusData.agentContract?.agentRegistered ? "Yes" : "No"
+          }, Balance: ${
+            statusData.agentContract?.contractBalance || "Unknown"
+          }`,
         });
       } catch (error) {
         results.tests.push({
-          name: "Agent Status",
+          name: "Agent Contract Status",
           status: "error",
           message: error.message,
         });
       }
 
-      // Test 3: Contract Connection
+      // Test 3: WebSocket Connection
       try {
-        const connectionResponse = await fetch(
-          `${Constants.API_URL}/api/screener/test-connection`
+        const wsResponse = await fetch(
+          `${Constants.API_URL}/api/debug/websocket-status`
         );
-        const connectionData = await connectionResponse.json();
+        const wsData = await wsResponse.json();
         results.tests.push({
-          name: "Contract Connection",
-          status: connectionData.success ? "success" : "warning",
-          message: connectionData.message || connectionData.error,
+          name: "WebSocket Connection",
+          status: wsData.connected ? "success" : "warning",
+          message: `Connected: ${
+            wsData.connected ? "Yes" : "No"
+          }, Reconnect attempts: ${wsData.reconnectAttempts}`,
         });
       } catch (error) {
         results.tests.push({
-          name: "Contract Connection",
+          name: "WebSocket Connection",
           status: "error",
           message: error.message,
         });
       }
 
-      // Test 4: Agent Balance
+      // Test 4: Auto-Approval System
       try {
-        const balanceResponse = await fetch(
-          `${Constants.API_URL}/api/screener/balance`
+        const statsResponse = await fetch(
+          `${Constants.API_URL}/api/screener/auto-approval-stats`
         );
-        const balanceData = await balanceResponse.json();
+        const statsData = await statsResponse.json();
         results.tests.push({
-          name: "Agent Balance",
+          name: "Auto-Approval System",
           status: "success",
-          message: `${balanceData.balanceInNEAR} NEAR (${balanceData.agentAccount})`,
+          message: `Screened: ${
+            statsData.autoApproval?.totalScreened || 0
+          }, Executed: ${statsData.autoApproval?.executed || 0}, Failed: ${
+            statsData.autoApproval?.executionFailed || 0
+          }`,
         });
       } catch (error) {
         results.tests.push({
-          name: "Agent Balance",
+          name: "Auto-Approval System",
           status: "error",
           message: error.message,
         });
       }
 
-      // Test 5: Mock Proposal Screening
+      // Test 5: Agent Approval Test
       try {
-        const mockProposal = {
-          title: "Test Proposal for Diagnostics",
-          description:
-            "This is a test proposal to verify AI screening functionality.",
-          proposer_id: "test.testnet",
-        };
-
-        const screenResponse = await fetch(
-          `${Constants.API_URL}/api/screener/screen`,
+        const approvalResponse = await fetch(
+          `${Constants.API_URL}/api/screener/agent-approve`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              proposalId: "test-diagnostic",
-              proposal: mockProposal,
+              proposalId: "test-diagnostics",
+              force: true,
             }),
           }
         );
-        const screenData = await screenResponse.json();
 
+        const approvalData = await approvalResponse.json();
+
+        if (approvalResponse.ok && approvalData.success) {
+          results.tests.push({
+            name: "Agent Contract Test",
+            status: "success",
+            message: `Agent contract approval test successful`,
+          });
+        } else {
+          results.tests.push({
+            name: "Agent Contract Test",
+            status: "warning",
+            message: approvalData.error || "Agent approval test failed",
+          });
+        }
+      } catch (error) {
         results.tests.push({
-          name: "AI Screening Test",
-          status: "success",
-          message: `Result: ${
-            screenData.approved ? "APPROVED" : "REJECTED"
-          } | Reasons: ${screenData.reasons?.join(", ") || "None"}`,
+          name: "Agent Contract Test",
+          status: "error",
+          message: error.message,
+        });
+      }
+
+      // Test 6: Environment Check
+      try {
+        const envResponse = await fetch(`${Constants.API_URL}/debug/env`);
+        const envData = await envResponse.json();
+        results.tests.push({
+          name: "Environment Check",
+          status: envData.hasAnthropicKey ? "success" : "warning",
+          message: `Anthropic API: ${
+            envData.hasAnthropicKey ? "Configured" : "Missing"
+          }, Agent: ${envData.agentAccountId || "Missing"}`,
         });
       } catch (error) {
         results.tests.push({
-          name: "AI Screening Test",
+          name: "Environment Check",
           status: "error",
           message: error.message,
         });
       }
 
       setTestResults(results);
-
-      // Refresh data after tests
       await fetchAllAgentData();
     } catch (error) {
       setTestResults({
@@ -213,7 +250,7 @@ export function Settings() {
   const getStatusBadge = (status) => {
     const colors = {
       success: "bg-success",
-      warning: "bg-warning",
+      warning: "bg-warning text-dark",
       error: "bg-danger",
     };
     return colors[status] || "bg-secondary";
@@ -223,14 +260,25 @@ export function Settings() {
     <div className="container-fluid">
       <div className="panel">
         <div className="d-flex justify-content-between align-items-center mb-4">
-          <h2>⚙️ AI Agent Management</h2>
-          <button
-            className="btn btn-primary"
-            onClick={runDiagnostics}
-            disabled={loading}
-          >
-            {loading ? "🔄 Running Diagnostics..." : "🧪 Run Full Diagnostics"}
-          </button>
+          <h2>⚙️ Shade Agent Management</h2>
+          <div className="d-flex gap-2">
+            <button
+              className="btn btn-outline-secondary btn-sm"
+              onClick={fetchAllAgentData}
+              disabled={loading}
+            >
+              🔄 Refresh
+            </button>
+            <button
+              className="btn btn-primary"
+              onClick={runDiagnostics}
+              disabled={loading}
+            >
+              {loading
+                ? "🔄 Running Diagnostics..."
+                : "🧪 Run Full Diagnostics"}
+            </button>
+          </div>
         </div>
 
         {/* System Configuration */}
@@ -250,33 +298,45 @@ export function Settings() {
                   <code>{Constants.AGENT_ACCOUNT_ID}</code>
                 </p>
                 <p>
-                  <strong>Votron API:</strong> <code>{Constants.API_URL}</code>
+                  <strong>TEE API Endpoint:</strong>{" "}
+                  <code>{Constants.API_URL}</code>
                 </p>
               </div>
               <div className="col-md-6">
-                {agentStatus && (
+                {agentStatus?.agentContract && (
                   <>
                     <p>
-                      <strong>Agent Mode:</strong>
+                      <strong>Agent Registration:</strong>
                       <span
                         className={`badge ms-2 ${
-                          agentStatus.autonomousMode
+                          agentStatus.agentContract.agentRegistered
                             ? "bg-success"
-                            : "bg-warning"
+                            : "bg-danger"
                         }`}
                       >
-                        {agentStatus.autonomousMode
-                          ? "Autonomous"
-                          : "Monitor Only"}
+                        {agentStatus.agentContract.agentRegistered
+                          ? "Registered"
+                          : "Not Registered"}
                       </span>
                     </p>
                     <p>
-                      <strong>Agent Account:</strong>{" "}
-                      <code>{agentStatus.agentAccount}</code>
+                      <strong>Contract Balance:</strong>{" "}
+                      {agentStatus.agentContract.contractBalance || "Unknown"}{" "}
+                      yoctoNEAR
                     </p>
                     <p>
-                      <strong>Total Screened:</strong>{" "}
-                      {agentStatus.totalScreened}
+                      <strong>Auto-Approval:</strong>
+                      <span
+                        className={`badge ms-2 ${
+                          agentStatus.autoApproval?.enabled
+                            ? "bg-success"
+                            : "bg-warning text-dark"
+                        }`}
+                      >
+                        {agentStatus.autoApproval?.enabled
+                          ? "Enabled"
+                          : "Disabled"}
+                      </span>
                     </p>
                   </>
                 )}
@@ -285,104 +345,229 @@ export function Settings() {
           </div>
         </div>
 
-        {/* Agent Status & Stats */}
+        {/* Real-time Status Dashboard */}
         <div className="row mb-4">
-          <div className="col-md-6">
-            <div className="card">
+          <div className="col-md-4">
+            <div className="card border-primary">
               <div className="card-header">
-                <h6>🤖 Agent Status</h6>
+                <h6>📊 Processing Statistics</h6>
               </div>
               <div className="card-body">
-                {agentBalance ? (
+                {autoApprovalStats?.autoApproval ? (
+                  <div className="row text-center">
+                    <div className="col-6">
+                      <div className="h4 text-primary mb-0">
+                        {autoApprovalStats.autoApproval.totalScreened}
+                      </div>
+                      <small>Screened</small>
+                    </div>
+                    <div className="col-6">
+                      <div className="h4 text-success mb-0">
+                        {autoApprovalStats.autoApproval.executed}
+                      </div>
+                      <small>Executed</small>
+                    </div>
+                    <div className="col-6 mt-2">
+                      <div className="h4 text-warning mb-0">
+                        {autoApprovalStats.autoApproval.pending}
+                      </div>
+                      <small>Pending</small>
+                    </div>
+                    <div className="col-6 mt-2">
+                      <div className="h4 text-danger mb-0">
+                        {autoApprovalStats.autoApproval.executionFailed}
+                      </div>
+                      <small>Failed</small>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-muted text-center">
+                    Loading statistics...
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="col-md-4">
+            <div className="card border-info">
+              <div className="card-header">
+                <h6>🔌 Connection Status</h6>
+              </div>
+              <div className="card-body">
+                {websocketStatus && autoApprovalStats?.monitoring ? (
                   <>
-                    <p>
-                      <strong>Balance:</strong> {agentBalance.balanceInNEAR}{" "}
-                      NEAR
-                    </p>
-                    <p>
-                      <strong>Account:</strong>{" "}
-                      <code>{agentBalance.agentAccount}</code>
-                    </p>
+                    <div className="d-flex justify-content-between mb-2">
+                      <span>WebSocket:</span>
+                      <span
+                        className={`badge ${
+                          autoApprovalStats.monitoring.eventStreamConnected
+                            ? "bg-success"
+                            : "bg-danger"
+                        }`}
+                      >
+                        {autoApprovalStats.monitoring.eventStreamConnected
+                          ? "Connected"
+                          : "Disconnected"}
+                      </span>
+                    </div>
+                    <div className="d-flex justify-content-between mb-2">
+                      <span>Connecting:</span>
+                      <span
+                        className={`badge ${
+                          websocketStatus.isConnecting
+                            ? "bg-warning text-dark"
+                            : "bg-secondary"
+                        }`}
+                      >
+                        {websocketStatus.isConnecting ? "Yes" : "No"}
+                      </span>
+                    </div>
+                    <div className="d-flex justify-content-between mb-2">
+                      <span>Reconnects:</span>
+                      <span className="badge bg-info">
+                        {websocketStatus.reconnectAttempts}
+                      </span>
+                    </div>
                     <small className="text-muted">
-                      Raw: {agentBalance.balance?.available || "Unknown"}{" "}
-                      yoctoNEAR
+                      Contract: {websocketStatus.votingContract}
                     </small>
                   </>
                 ) : (
-                  <p className="text-muted">Loading balance...</p>
+                  <p className="text-muted">Loading connection status...</p>
                 )}
               </div>
             </div>
           </div>
-          <div className="col-md-6">
-            <div className="card">
+
+          <div className="col-md-4">
+            <div className="card border-success">
               <div className="card-header">
-                <h6>📊 Screening Statistics</h6>
+                <h6>🛡️ Security Features</h6>
               </div>
               <div className="card-body">
-                {screeningStats ? (
+                {agentStatus?.securityFeatures ? (
                   <>
-                    <p>
-                      <strong>Total Screened:</strong> {screeningStats.total}
-                    </p>
-                    <p>
-                      <strong>Approved:</strong> {screeningStats.approved}
-                    </p>
-                    <p>
-                      <strong>Rejected:</strong> {screeningStats.rejected}
-                    </p>
-                    <p>
-                      <strong>With Execution:</strong>{" "}
-                      {screeningStats.withExecution}
-                    </p>
+                    <div className="d-flex justify-content-between mb-2">
+                      <span>TEE Attestation:</span>
+                      <span
+                        className={`badge ${
+                          agentStatus.securityFeatures.attestationRequired
+                            ? "bg-success"
+                            : "bg-warning text-dark"
+                        }`}
+                      >
+                        {agentStatus.securityFeatures.attestationRequired
+                          ? "Required"
+                          : "Optional"}
+                      </span>
+                    </div>
+                    <div className="d-flex justify-content-between mb-2">
+                      <span>Codehash Validation:</span>
+                      <span
+                        className={`badge ${
+                          agentStatus.securityFeatures.codehashValidation
+                            ? "bg-success"
+                            : "bg-warning text-dark"
+                        }`}
+                      >
+                        {agentStatus.securityFeatures.codehashValidation
+                          ? "Active"
+                          : "Inactive"}
+                      </span>
+                    </div>
+                    <div className="d-flex justify-content-between">
+                      <span>Access Control:</span>
+                      <span className="badge bg-info">
+                        {agentStatus.securityFeatures.accessControl}
+                      </span>
+                    </div>
                   </>
                 ) : (
-                  <p className="text-muted">Loading stats...</p>
+                  <p className="text-muted">Loading security info...</p>
                 )}
               </div>
             </div>
           </div>
         </div>
 
-        {/* Agent Information */}
-        {agentInfo && (
-          <div className="card mb-4">
-            <div className="card-header">
-              <h5>📋 Agent Details</h5>
-            </div>
-            <div className="card-body">
-              <div className="row">
-                <div className="col-md-6">
-                  <p>
-                    <strong>Runtime Account:</strong>{" "}
-                    <code>{agentInfo.agentAccountId}</code>
-                  </p>
-                  <p>
-                    <strong>Configured Account:</strong>{" "}
-                    <code>{agentInfo.configuredAccountId}</code>
-                  </p>
-                  <p>
-                    <strong>Voting Contract:</strong>{" "}
-                    <code>{agentInfo.votingContract}</code>
-                  </p>
+        {/* Recent Execution History */}
+        {executionHistory?.executions &&
+          executionHistory.executions.length > 0 && (
+            <div className="card mb-4">
+              <div className="card-header">
+                <h5>📋 Recent Agent Activity</h5>
+              </div>
+              <div className="card-body">
+                <div className="table-responsive">
+                  <table className="table table-sm">
+                    <thead>
+                      <tr>
+                        <th>Proposal ID</th>
+                        <th>Status</th>
+                        <th>Method</th>
+                        <th>Transaction</th>
+                        <th>Timestamp</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {executionHistory.executions
+                        .slice(0, 10)
+                        .map((execution, i) => (
+                          <tr key={i}>
+                            <td>#{execution.proposalId}</td>
+                            <td>
+                              <span
+                                className={`badge ${
+                                  execution.success ? "bg-success" : "bg-danger"
+                                }`}
+                              >
+                                {execution.success ? "Success" : "Failed"}
+                              </span>
+                            </td>
+                            <td>
+                              <small>
+                                {execution.executionMethod?.replace("_", " ") ||
+                                  "Unknown"}
+                              </small>
+                            </td>
+                            <td>
+                              {execution.executionTxHash ? (
+                                <a
+                                  href={`https://explorer.testnet.near.org/transactions/${execution.executionTxHash}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-decoration-none"
+                                >
+                                  <small>
+                                    {execution.executionTxHash.substring(0, 8)}
+                                    ...
+                                  </small>
+                                </a>
+                              ) : (
+                                <small className="text-muted">N/A</small>
+                              )}
+                            </td>
+                            <td>
+                              <small>
+                                {new Date(
+                                  execution.executedAt || execution.attemptedAt
+                                ).toLocaleString()}
+                              </small>
+                            </td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
                 </div>
-                <div className="col-md-6">
-                  <p>
-                    <strong>Custom Contract:</strong>{" "}
-                    {agentInfo.customContract || "None"}
-                  </p>
-                  <p>
-                    <strong>Execution Mode:</strong> {agentInfo.mode}
-                  </p>
-                  <p>
-                    <strong>Status:</strong>
-                    <span className="badge bg-success ms-2">Active</span>
-                  </p>
+                <div className="text-muted small">
+                  Showing latest{" "}
+                  {Math.min(10, executionHistory.executions.length)} of{" "}
+                  {executionHistory.totalExecutions} total executions
                 </div>
               </div>
             </div>
-          </div>
-        )}
+          )}
 
         {/* Diagnostic Results */}
         {testResults && (
@@ -400,7 +585,7 @@ export function Settings() {
                   {testResults.tests.map((test, index) => (
                     <div
                       key={index}
-                      className="d-flex justify-content-between align-items-center mb-2 p-2 border rounded"
+                      className="d-flex justify-content-between align-items-center mb-2 p-3 border rounded"
                     >
                       <div>
                         <strong>{test.name}</strong>
@@ -414,15 +599,22 @@ export function Settings() {
                   ))}
 
                   <div className="mt-3 text-center">
-                    {testResults.tests.every((t) => t.status === "success") ? (
+                    {testResults.tests.filter((t) => t.status === "success")
+                      .length === testResults.tests.length ? (
                       <div className="alert alert-success">
-                        🎉 All diagnostics passed! Your AI agent is fully
+                        🎉 All diagnostics passed! Your shade agent is fully
                         operational.
+                      </div>
+                    ) : testResults.tests.filter((t) => t.status === "error")
+                        .length > 0 ? (
+                      <div className="alert alert-danger">
+                        ❌ Critical issues detected. Check the results above for
+                        details.
                       </div>
                     ) : (
                       <div className="alert alert-warning">
-                        ⚠️ Some tests failed. Check the results above for
-                        details.
+                        ⚠️ Some warnings detected. Agent may still be
+                        functional.
                       </div>
                     )}
                   </div>
@@ -441,10 +633,9 @@ export function Settings() {
             <div className="d-flex gap-2 flex-wrap">
               <button
                 className="btn btn-outline-primary"
-                onClick={fetchAllAgentData}
-                disabled={loading}
+                onClick={() => window.open(`${Constants.API_URL}/`, "_blank")}
               >
-                🔄 Refresh Data
+                🏠 Agent Dashboard
               </button>
 
               <button
@@ -463,19 +654,33 @@ export function Settings() {
                 className="btn btn-outline-success"
                 onClick={() =>
                   window.open(
-                    `${Constants.API_URL}/api/screener/results`,
+                    `${Constants.API_URL}/api/screener/execution-history`,
                     "_blank"
                   )
                 }
               >
-                📊 View Raw Results
+                📊 Execution History
+              </button>
+
+              <button
+                className="btn btn-outline-warning"
+                onClick={() =>
+                  window.open(`${Constants.API_URL}/debug/env`, "_blank")
+                }
+              >
+                🔍 Environment Debug
               </button>
 
               <button
                 className="btn btn-outline-secondary"
-                onClick={() => window.open(`${Constants.API_URL}`, "_blank")}
+                onClick={() =>
+                  window.open(
+                    `${Constants.API_URL}/api/screener/auto-approval-stats`,
+                    "_blank"
+                  )
+                }
               >
-                🏠 Agent Dashboard
+                📈 Live Stats
               </button>
             </div>
           </div>

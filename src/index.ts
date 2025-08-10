@@ -15,18 +15,18 @@ console.log("NODE_ENV:", process.env.NODE_ENV);
 console.log("ANTHROPIC_API_KEY exists:", !!process.env.ANTHROPIC_API_KEY);
 console.log("AGENT_ACCOUNT_ID:", process.env.AGENT_ACCOUNT_ID);
 
-// Import routes
+// Import services
 import { ProposalScreener } from "./proposalScreener";
 import createScreenerRoutes from "./routes/proposalScreener";
-
 import { agent, agentAccountId } from "@neardefi/shade-agent-js";
 
-// House of Stake config
+// Configuration
 const VOTING_CONTRACT_ID =
   process.env.VOTING_CONTRACT_ID || "shade.ballotbox.testnet";
 const NEAR_RPC_JSON =
   process.env.NEAR_RPC_JSON || "https://rpc.testnet.near.org";
 
+// Initialize screener
 const proposalScreener = new ProposalScreener({
   trustedProposers: [],
   blockedProposers: [],
@@ -35,21 +35,20 @@ const proposalScreener = new ProposalScreener({
   votingContractId: "shade.ballotbox.testnet",
 });
 
-// Event stream client for NEAR proposal monitoring
+// WebSocket monitoring
 let eventClient: WebSocket | null = null;
 let isConnecting = false;
 let reconnectAttempts = 0;
-``;
 const maxReconnectAttempts = 5;
 
+// Create Hono app
 const app = new Hono();
-
-// Configure CORS to restrict access to the server
 app.use(cors());
 
-// Enhanced health check with screener status
+// Health check
 app.get("/", (c) => {
   const stats = proposalScreener.getScreeningStats();
+  const execStats = proposalScreener.getExecutionStats();
 
   return c.json({
     message: "App is running",
@@ -64,13 +63,20 @@ app.get("/", (c) => {
       breakdown: stats.breakdown,
       lastScreened: stats.lastScreened,
     },
+    execution: {
+      autonomousMode: proposalScreener.autonomousMode,
+      totalExecutions: execStats.total,
+      successful: execStats.successful,
+      failed: execStats.failed,
+    },
   });
 });
 
-// Shade Agent routes
+// Mount routes
 app.route("/api/screener", createScreenerRoutes(proposalScreener));
 app.route("/api/agent", createShadeAgentApiRoutes());
 
+// Debug endpoints
 app.get("/api/debug/websocket-status", (c) => {
   return c.json({
     connected: !!eventClient,
@@ -94,80 +100,154 @@ app.get("/debug/env", (c) => {
   });
 });
 
+// Agent status endpoint
+app.get("/api/screener/agent-status", async (c) => {
+  try {
+    let agentRegistered = false;
+    let agentInfo = null;
+    let contractBalance = null;
+
+    try {
+      const agentCheckResult = await agent("view", {
+        contractId: process.env.AGENT_ACCOUNT_ID,
+        methodName: "get_agent",
+        args: { account_id: process.env.AGENT_ACCOUNT_ID },
+      });
+      agentRegistered = true;
+      agentInfo = agentCheckResult;
+    } catch (error: any) {
+      console.warn("Agent not found:", error.message);
+    }
+
+    try {
+      const balanceResult = await agent("view", {
+        contractId: process.env.AGENT_ACCOUNT_ID,
+        methodName: "get_contract_balance",
+        args: {},
+      });
+      contractBalance = balanceResult;
+    } catch (error: any) {
+      console.warn("Could not fetch balance:", error.message);
+    }
+
+    return c.json({
+      agentContract: {
+        contractId: process.env.AGENT_ACCOUNT_ID,
+        agentRegistered,
+        agentInfo,
+        contractBalance,
+        votingContract: VOTING_CONTRACT_ID,
+      },
+      autoApproval: {
+        enabled: agentRegistered,
+        method: "agent_contract",
+      },
+    });
+  } catch (error: any) {
+    console.error("❌ Agent status check failed:", error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+// Manual approval endpoint
+app.post("/api/screener/agent-approve", async (c) => {
+  try {
+    const { proposalId, force } = await c.req.json();
+
+    if (!proposalId) {
+      return c.json({ error: "proposalId required" }, 400);
+    }
+
+    const screeningResult = proposalScreener.getScreeningResult(proposalId);
+    if (!screeningResult) {
+      return c.json({ error: "Proposal not found or not screened" }, 404);
+    }
+
+    if (proposalScreener.isProposalExecuted(proposalId)) {
+      return c.json(
+        {
+          error: "Proposal already executed",
+          executionResult: proposalScreener.getExecutionStatus(proposalId),
+        },
+        400
+      );
+    }
+
+    if (!screeningResult.approved && !force) {
+      return c.json(
+        {
+          error: "Proposal was rejected by AI. Use force=true to override.",
+          screeningResult,
+        },
+        400
+      );
+    }
+
+    const result = await proposalScreener.approveProposal(proposalId);
+
+    return c.json({
+      success: true,
+      proposalId,
+      forced: !!force,
+      method: "agent_contract",
+      result,
+      message: `Proposal ${proposalId} approved via agent contract`,
+    });
+  } catch (error: any) {
+    console.error("❌ Manual agent approval failed:", error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+// Shade Agent API routes (for library compatibility)
 function createShadeAgentApiRoutes() {
   const agentApiRoutes = new Hono();
 
   agentApiRoutes.post("/getAccountId", async (c) => {
     try {
-      console.log("🔧 shade-agent-js requesting getAccountId");
       const result = await agentAccountId();
       return c.json(result);
     } catch (error: any) {
-      console.error("❌ getAccountId failed:", error.message);
       return c.json({ error: error.message }, 500);
     }
   });
 
   agentApiRoutes.post("/getBalance", async (c) => {
     try {
-      console.log("🔧 shade-agent-js requesting getBalance");
       const result = await agent("getBalance");
       return c.json(result);
     } catch (error: any) {
-      console.error("❌ getBalance failed:", error.message);
       return c.json({ error: error.message }, 500);
     }
   });
 
   agentApiRoutes.post("/call", async (c) => {
     try {
-      console.log("🔧 shade-agent-js requesting call");
       const body = await c.req.json();
-      console.log("📋 Call params:", body);
-
       const result = await agent("call", body);
-      console.log("✅ Call result:", result);
       return c.json(result);
     } catch (error: any) {
-      console.error("❌ Call failed:", error.message);
-      return c.json({ error: error.message }, 500);
-    }
-  });
-
-  agentApiRoutes.post("/functionCall", async (c) => {
-    try {
-      console.log("🔧 shade-agent-js requesting functionCall");
-      const body = await c.req.json();
-      const result = await agent("functionCall", body);
-      return c.json(result);
-    } catch (error: any) {
-      console.error("❌ functionCall failed:", error.message);
       return c.json({ error: error.message }, 500);
     }
   });
 
   agentApiRoutes.post("/view", async (c) => {
     try {
-      console.log("🔧 shade-agent-js requesting view");
       const body = await c.req.json();
       const result = await agent("view", body);
       return c.json(result);
     } catch (error: any) {
-      console.error("❌ view failed:", error.message);
       return c.json({ error: error.message }, 500);
     }
   });
 
-  // Generic handler for any other agent methods
   agentApiRoutes.post("/:method", async (c) => {
     try {
       const method = c.req.param("method");
-      console.log(`🔧 shade-agent-js requesting ${method}`);
       const body = await c.req.json();
       const result = await agent(method, body);
       return c.json(result);
     } catch (error: any) {
-      console.error(`❌ ${c.req.param("method")} failed:`, error.message);
       return c.json({ error: error.message }, 500);
     }
   });
@@ -175,7 +255,7 @@ function createShadeAgentApiRoutes() {
   return agentApiRoutes;
 }
 
-// NEAR proposal monitoring functions
+// WebSocket monitoring functions
 interface ProposalData {
   title?: string;
   description?: string;
@@ -185,24 +265,6 @@ interface ProposalData {
   voting_end?: string;
   snapshot_block?: string;
   total_voting_power?: string;
-}
-
-async function fetchWithTimeout(
-  url: string,
-  opts: any = {},
-  timeout = 10000
-): Promise<Response> {
-  const controller = new AbortController();
-  const id = setTimeout(() => controller.abort(), timeout);
-
-  try {
-    const res = await fetch(url, { ...opts, signal: controller.signal });
-    clearTimeout(id);
-    return res;
-  } catch (error) {
-    clearTimeout(id);
-    throw error;
-  }
 }
 
 async function fetchProposal(
@@ -226,15 +288,11 @@ async function fetchProposal(
     },
   };
 
-  const res = await fetchWithTimeout(
-    NEAR_RPC_JSON,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    },
-    10000
-  );
+  const res = await fetch(NEAR_RPC_JSON, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
 
   if (!res.ok) {
     throw new Error(`RPC request failed: ${res.status}`);
@@ -252,9 +310,7 @@ async function fetchProposal(
 
   const bytes = json.result.result;
   const raw = Buffer.from(bytes).toString("utf-8");
-  const proposal = JSON.parse(raw);
-
-  return proposal;
+  return JSON.parse(raw);
 }
 
 async function handleNewProposal(proposalId: string, eventDetails: any) {
@@ -266,6 +322,7 @@ async function handleNewProposal(proposalId: string, eventDetails: any) {
     let description = eventDetails.description || "";
     let proposer_id = eventDetails.proposer_id;
 
+    // Fetch full proposal details if needed
     if (!eventDetails.title || !eventDetails.description) {
       try {
         proposal = await fetchProposal(proposalId);
@@ -281,7 +338,7 @@ async function handleNewProposal(proposalId: string, eventDetails: any) {
       }
     }
 
-    // 🛡️ SCREEN THE PROPOSAL
+    // Screen the proposal (with auto-execution if enabled)
     const screeningResult = await proposalScreener.screenProposal(proposalId, {
       title,
       description,
@@ -297,7 +354,21 @@ async function handleNewProposal(proposalId: string, eventDetails: any) {
         description.length > 150 ? "..." : ""
       }`
     );
+    console.log(
+      `🤖 AI Decision: ${screeningResult.approved ? "APPROVED" : "REJECTED"}`
+    );
     console.log(`📋 Reasons: ${screeningResult.reasons.join(" | ")}`);
+
+    if (screeningResult.executionResult) {
+      console.log(
+        `🚀 Execution: ${screeningResult.executionResult.action.toUpperCase()}`
+      );
+      if (screeningResult.executionResult.transactionHash) {
+        console.log(
+          `🔗 Transaction: ${screeningResult.executionResult.transactionHash}`
+        );
+      }
+    }
   } catch (error: any) {
     console.error(
       `❌ Failed to process new proposal ${proposalId}:`,
@@ -310,24 +381,17 @@ async function handleProposalApproval(proposalId: string, eventDetails: any) {
   try {
     console.log(`✅ Processing approval for proposal ${proposalId}`);
 
-    // Check if we already have a screening result
     const existingResult = proposalScreener.getScreeningResult(proposalId);
-
     if (existingResult) {
       console.log(`\n🗳️ PROPOSAL ${proposalId} APPROVED FOR VOTING:`);
+      console.log(
+        `📋 Our screening: ${existingResult.approved ? "APPROVED" : "REJECTED"}`
+      );
       console.log(`📋 Reasons: ${existingResult.reasons.join(" | ")}`);
     } else {
-      // Screen it now if we haven't seen it before
-      let proposal: ProposalData | null = null;
-      try {
-        proposal = await fetchProposal(proposalId);
-        await handleNewProposal(proposalId, proposal);
-      } catch (error: any) {
-        console.warn(
-          `⚠️ Could not screen approved proposal ${proposalId}:`,
-          error.message
-        );
-      }
+      console.log(
+        `⚠️ Proposal ${proposalId} was approved but we haven't screened it`
+      );
     }
   } catch (error: any) {
     console.error(
@@ -337,7 +401,7 @@ async function handleProposalApproval(proposalId: string, eventDetails: any) {
   }
 }
 
-// Helper functions to extract data from events
+// Event processing helpers
 function extractProposalId(event: any): string | null {
   const proposalId = event.event_data?.[0]?.proposal_id;
   return proposalId !== undefined ? proposalId.toString() : null;
@@ -363,7 +427,7 @@ function extractProposalDetails(event: any) {
   };
 }
 
-// Start blockchain event monitoring
+// WebSocket connection
 async function startEventStream() {
   if (!VOTING_CONTRACT_ID) {
     console.log("⚠️ VOTING_CONTRACT_ID not set - skipping proposal monitoring");
@@ -408,55 +472,37 @@ async function startEventStream() {
       try {
         const text = data.toString();
 
-        // Log ALL incoming messages for debugging
-        console.log("🔥 RAW WebSocket message received:", text);
-
         if (!text.startsWith("{") && !text.startsWith("[")) {
           console.log("📨 WebSocket message (non-JSON):", text);
           return;
         }
 
         const events = JSON.parse(text);
-        console.log("📥 Parsed events:", JSON.stringify(events, null, 2));
-
         const eventArray = Array.isArray(events) ? events : [events];
 
         for (const event of eventArray) {
-          console.log("🔍 Processing event:", JSON.stringify(event, null, 2));
-
           const proposalId = extractProposalId(event);
           const eventType = extractEventType(event);
           const accountId = extractAccountId(event);
 
-          console.log(
-            `📋 Event details: type=${eventType}, proposalId=${proposalId}, account=${accountId}`
-          );
-
           if (accountId && accountId !== VOTING_CONTRACT_ID) {
-            console.log(
-              `⏩ Skipping event from different contract: ${accountId}`
-            );
             continue;
           }
 
           if (!proposalId || !eventType) {
-            console.log(`⏩ Skipping event - missing proposalId or eventType`);
             continue;
           }
 
           console.log(`🎯 PROCESSING ${eventType} for proposal ${proposalId}`);
           const eventDetails = extractProposalDetails(event);
 
-          if (
+          if (eventType === "create_proposal" || eventType.includes("create")) {
+            await handleNewProposal(proposalId, eventDetails);
+          } else if (
             eventType === "approve_proposal" ||
             eventType.includes("approve")
           ) {
             await handleProposalApproval(proposalId, eventDetails);
-          } else if (
-            eventType === "create_proposal" ||
-            eventType.includes("create")
-          ) {
-            await handleNewProposal(proposalId, eventDetails);
           } else {
             console.log(`⏩ Unhandled event type: ${eventType}`);
           }
@@ -483,7 +529,6 @@ async function startEventStream() {
         }, delay);
       } else {
         console.error("❌ Max reconnection attempts reached");
-        console.log("⚠️ Event stream disabled");
         isConnecting = false;
       }
     });
@@ -506,7 +551,7 @@ const port = Number(process.env.PORT || "3000");
 
 console.log(`🚀 Starting Proposal Reviewer Agent`);
 
-// Start proposal monitoring after a short delay to ensure server is ready
+// Start proposal monitoring
 if (VOTING_CONTRACT_ID) {
   setTimeout(() => {
     console.log(

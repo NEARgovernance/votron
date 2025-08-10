@@ -1,4 +1,4 @@
-import { agent, agentAccountId } from "@neardefi/shade-agent-js";
+import { agent, agentCall } from "@neardefi/shade-agent-js";
 
 interface ScreeningCriteria {
   trustedProposers?: string[];
@@ -35,6 +35,7 @@ interface ProposalData {
 export class ProposalScreener {
   private criteria: ScreeningCriteria;
   private screeningHistory: Map<string, ScreeningResult>;
+  private executionResults: Map<string, any>;
 
   public autonomousMode: boolean;
   public agentAccountId?: string;
@@ -54,16 +55,17 @@ export class ProposalScreener {
       initialCriteria.votingContractId ||
       process.env.VOTING_CONTRACT_ID ||
       "shade.ballotbox.testnet";
-    this.customContractId = process.env.CUSTOM_CONTRACT_ID;
+    this.customContractId =
+      initialCriteria.customContractId || process.env.CUSTOM_CONTRACT_ID;
     this.autonomousMode = !!(this.agentAccountId && this.votingContractId);
     this.screeningHistory = new Map();
+    this.executionResults = new Map();
 
     console.log(
       `🛡️ AI Proposal screener initialized (Anthropic ${
         this.criteria.apiKey ? "✅" : "❌"
       })`
     );
-
     if (this.autonomousMode) {
       console.log("🤖 AUTONOMOUS DAO GOVERNANCE ACTIVE");
       console.log(`🔑 Agent account: ${this.agentAccountId}`);
@@ -128,20 +130,12 @@ export class ProposalScreener {
     }
   }
 
-  private async askAI(proposal: ProposalData): Promise<{
-    approved: boolean;
-    reasons: string[];
-  }> {
-    console.log(
-      "🧪 ANTHROPIC_API_KEY exists:",
-      !!process.env.ANTHROPIC_API_KEY
-    );
-
-    const apiKey = process.env.ANTHROPIC_API_KEY;
+  private async askAI(
+    proposal: ProposalData
+  ): Promise<{ approved: boolean; reasons: string[] }> {
+    const apiKey = this.criteria.apiKey || process.env.ANTHROPIC_API_KEY;
 
     if (!apiKey) {
-      console.error(`❌ No Anthropic API key found in environment`);
-      console.error(`❌ All env keys:`, Object.keys(process.env).slice(0, 10));
       throw new Error("No Anthropic API key configured");
     }
 
@@ -174,9 +168,6 @@ Respond ONLY with JSON:
 
     try {
       console.log(`🤖 Sending proposal to Claude for screening...`);
-      console.log(
-        `🔗 Using API endpoint: https://api.anthropic.com/v1/messages`
-      );
 
       const response = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
@@ -188,61 +179,26 @@ Respond ONLY with JSON:
         body: JSON.stringify({
           model: "claude-3-5-sonnet-20241022",
           max_tokens: 200,
-          messages: [
-            {
-              role: "user",
-              content: prompt,
-            },
-          ],
+          messages: [{ role: "user", content: prompt }],
         }),
       });
 
-      console.log(`📡 Anthropic API response status: ${response.status}`);
-
       if (!response.ok) {
         const errorText = await response.text();
-        console.error(`🤖 Anthropic API Error ${response.status}:`, errorText);
-
-        // Try to parse error details
-        try {
-          const errorData = JSON.parse(errorText);
-          console.error(`🤖 Parsed error:`, errorData);
-        } catch {
-          console.error(`🤖 Raw error:`, errorText);
-        }
-
         throw new Error(
-          `Anthropic API error: ${response.status} ${
-            response.statusText
-          } - ${errorText.substring(0, 200)}`
+          `Anthropic API error: ${response.status} - ${errorText.substring(
+            0,
+            200
+          )}`
         );
       }
 
       const data = await response.json();
-      console.log(`🤖 Claude response data:`, data);
-
       const aiResponse = data.content[0].text;
-      console.log(`🤖 Claude response text:`, aiResponse);
-
       return this.parseAIResponse(aiResponse);
     } catch (error: any) {
       console.error("🤖 AI API call failed:", error);
-
-      // More specific error handling
-      if (error.message.includes("401")) {
-        throw new Error(`Invalid Anthropic API key`);
-      } else if (error.message.includes("429")) {
-        throw new Error(`Anthropic API rate limit exceeded`);
-      } else if (
-        error.message.includes("network") ||
-        error.message.includes("fetch")
-      ) {
-        throw new Error(
-          `Network error connecting to Anthropic API: ${error.message}`
-        );
-      } else {
-        throw new Error(`AI screening failed: ${error.message}`);
-      }
+      throw new Error(`AI screening failed: ${error.message}`);
     }
   }
 
@@ -251,7 +207,6 @@ Respond ONLY with JSON:
     reasons: string[];
   } {
     try {
-      // Try to extract JSON from the response
       const jsonMatch = response.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         const parsed = JSON.parse(jsonMatch[0]);
@@ -263,7 +218,6 @@ Respond ONLY with JSON:
         };
       }
 
-      // Fallback: look for approve/reject in text
       const isApprove = response.toLowerCase().includes("approve");
       return {
         approved: isApprove,
@@ -277,56 +231,17 @@ Respond ONLY with JSON:
     }
   }
 
-  shouldExecuteAction(screeningResult: ScreeningResult): boolean {
-    return screeningResult.approved;
-  }
-
-  private async executeDecision(
-    proposalId: string,
-    screeningResult: ScreeningResult
-  ): Promise<ExecutionResult | null> {
-    if (!this.agentAccountId || !this.votingContractId) {
-      throw new Error("Agent account or voting contract not configured");
-    }
-
-    const { approved } = screeningResult;
-
-    if (approved) {
-      console.log(
-        `🤖 Executing autonomous APPROVAL for proposal ${proposalId}`
-      );
-      return await this.approveProposal(proposalId);
-    } else {
-      console.log(`🤖 Proposal ${proposalId} not approved - no action taken`);
-      return null;
-    }
-  }
-
   private async executeIfAutonomous(
     result: ScreeningResult
   ): Promise<ScreeningResult> {
-    if (this.autonomousMode && this.shouldExecuteAction(result)) {
+    if (this.autonomousMode && result.approved) {
       try {
-        const executionResult = await this.executeDecision(
-          result.proposalId,
-          result
+        console.log(
+          `🤖 Executing autonomous approval for proposal ${result.proposalId}`
         );
-
-        if (executionResult) {
-          result.executionResult = executionResult;
-          result.reasons.push(
-            `🤖 Autonomous action: ${executionResult.action}`
-          );
-          console.log(
-            `✅ Autonomous execution completed for proposal ${result.proposalId}`
-          );
-        } else {
-          console.log(
-            `⏸️ No autonomous action taken for proposal ${result.proposalId}`
-          );
-          result.reasons.push(`⏸️ No action taken - proposal not approved`);
-        }
-
+        const executionResult = await this.approveProposal(result.proposalId);
+        result.executionResult = executionResult;
+        result.reasons.push(`🤖 Autonomous action: ${executionResult.action}`);
         this.screeningHistory.set(result.proposalId, result);
       } catch (error: any) {
         console.error(`❌ Failed to execute autonomous action:`, error);
@@ -345,61 +260,132 @@ Respond ONLY with JSON:
   async approveProposal(proposalId: string): Promise<ExecutionResult> {
     console.log(`✅ Auto-approving proposal ${proposalId}...`);
 
+    if (this.isProposalExecuted(proposalId)) {
+      throw new Error(`Proposal ${proposalId} already executed`);
+    }
+
     try {
-      const teeUrl =
-        process.env.API_URL ||
-        "https://fcc7aa30847d9689c5321fb49bdd47c0a66c9e78-3000.dstack-prod7.phala.network";
+      const result = this.customContractId
+        ? await this.executeViaAgentContract(proposalId)
+        : await this.executeViaTEE(proposalId);
 
-      const response = await fetch(
-        `${teeUrl}/api/screener/execute-transaction`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            receiverId: this.votingContractId!,
-            actions: [
-              {
-                type: "FunctionCall",
-                params: {
-                  methodName: "approve_proposal",
-                  args: {
-                    proposal_id: parseInt(proposalId),
-                    voting_start_time_sec: null,
-                  },
-                  gas: "50000000000000",
-                  deposit: "1",
-                },
-              },
-            ],
-          }),
-        }
-      );
+      // Store execution result
+      this.executionResults.set(proposalId, {
+        executed: true,
+        executionTxHash: result.transactionHash,
+        executedAt: new Date().toISOString(),
+        executionMethod: this.customContractId ? "agent_contract" : "tee",
+        success: true,
+      });
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(
-          `TEE transaction failed: ${response.status} ${response.statusText} - ${errorText}`
-        );
-      }
-
-      const result = await response.json();
-      console.log(`✅ Successfully approved proposal ${proposalId}`, result);
-
-      return {
-        action: "approved",
-        transactionHash: result.transactionHash,
-        timestamp: new Date().toISOString(),
-      };
+      return result;
     } catch (error: any) {
-      console.error(`❌ TEE approval failed:`, error.message);
+      console.error(`❌ Approval failed:`, error.message);
+
+      this.executionResults.set(proposalId, {
+        executed: false,
+        executionError: error.message,
+        executionMethod: this.customContractId
+          ? "agent_contract_failed"
+          : "tee_failed",
+        success: false,
+        attemptedAt: new Date().toISOString(),
+      });
+
       return {
         action: "failed",
-        transactionHash: `simulated_approve_${Date.now()}`,
         timestamp: new Date().toISOString(),
         error: error.message,
       };
+    }
+  }
+
+  private async executeViaAgentContract(
+    proposalId: string
+  ): Promise<ExecutionResult> {
+    console.log(
+      `🤖 Executing via agent contract for proposal ${proposalId}...`
+    );
+
+    const result = await agentCall({
+      methodName: "approve_proposal",
+      args: {
+        proposal_id: parseInt(proposalId),
+        voting_start_time_sec: null,
+      },
+    });
+
+    return {
+      action: "approved",
+      transactionHash:
+        result.transaction?.hash || result.txHash || `agent_${Date.now()}`,
+      timestamp: new Date().toISOString(),
+    };
+  }
+
+  private async executeViaTEE(proposalId: string): Promise<ExecutionResult> {
+    console.log(`🛡️ Executing via TEE for proposal ${proposalId}...`);
+
+    const teeUrl =
+      process.env.API_URL ||
+      "https://e3303d7df5813ffb9c8a5a60abdedba3f304069a-3000.dstack-prod7.phala.network";
+
+    const response = await fetch(`${teeUrl}/api/screener/execute-transaction`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        receiverId: this.votingContractId!,
+        actions: [
+          {
+            type: "FunctionCall",
+            params: {
+              methodName: "approve_proposal",
+              args: {
+                proposal_id: parseInt(proposalId),
+                voting_start_time_sec: null,
+              },
+              gas: "50000000000000",
+              deposit: "1",
+            },
+          },
+        ],
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `TEE transaction failed: ${response.status} - ${errorText}`
+      );
+    }
+
+    const result = await response.json();
+    return {
+      action: "approved",
+      transactionHash: result.transactionHash || `tee_${Date.now()}`,
+      timestamp: new Date().toISOString(),
+    };
+  }
+
+  async testContractConnection(): Promise<boolean> {
+    try {
+      if (this.customContractId) {
+        await agent("view", {
+          contractId: this.agentAccountId!,
+          methodName: "get_agent",
+          args: { account_id: this.agentAccountId },
+        });
+        return true;
+      } else {
+        const teeUrl =
+          process.env.API_URL ||
+          "https://e3303d7df5813ffb9c8a5a60abdedba3f304069a-3000.dstack-prod7.phala.network";
+        const response = await fetch(`${teeUrl}/`);
+        return response.ok;
+      }
+    } catch (error) {
+      console.error("Connection test failed:", error);
+      return false;
     }
   }
 
@@ -418,9 +404,7 @@ Respond ONLY with JSON:
     this.screeningHistory.set(proposalId, result);
 
     const emoji = approved ? "✅" : "⏸️";
-    const decisionText = approved
-      ? "APPROVE & EXECUTE"
-      : "NOT APPROVED (no action)";
+    const decisionText = approved ? "APPROVED" : "NOT APPROVED";
     console.log(`${emoji} Proposal ${proposalId}: ${decisionText}`);
     console.log(`   Reasons: ${reasons.join(" | ")}`);
 
@@ -429,6 +413,10 @@ Respond ONLY with JSON:
 
   getScreeningHistory(): ScreeningResult[] {
     return Array.from(this.screeningHistory.values());
+  }
+
+  getScreeningResult(proposalId: string): ScreeningResult | undefined {
+    return this.screeningHistory.get(proposalId);
   }
 
   getScreeningStats() {
@@ -444,32 +432,47 @@ Respond ONLY with JSON:
     };
   }
 
-  getScreeningResult(proposalId: string): ScreeningResult | undefined {
-    return this.screeningHistory.get(proposalId);
+  // Execution tracking methods
+  getExecutionStatus(proposalId: string) {
+    return this.executionResults.get(proposalId) || null;
+  }
+
+  isProposalExecuted(proposalId: string): boolean {
+    const result = this.executionResults.get(proposalId);
+    return result?.executed === true;
+  }
+
+  getRecentExecutions(limit: number = 10) {
+    return Array.from(this.executionResults.entries())
+      .map(([proposalId, result]) => ({ proposalId, ...result }))
+      .sort((a, b) => {
+        const timeA = new Date(a.executedAt || a.attemptedAt || 0).getTime();
+        const timeB = new Date(b.executedAt || b.attemptedAt || 0).getTime();
+        return timeB - timeA;
+      })
+      .slice(0, limit);
+  }
+
+  getExecutionStats() {
+    const executions = Array.from(this.executionResults.values());
+    const successful = executions.filter((e) => e.executed && e.success).length;
+    const failed = executions.filter((e) => !e.success).length;
+
+    return {
+      total: executions.length,
+      successful,
+      failed,
+      pending: executions.filter((e) => !e.executed).length,
+      lastExecution:
+        executions.length > 0
+          ? executions[executions.length - 1].attemptedAt
+          : null,
+    };
   }
 
   clearHistory() {
     this.screeningHistory.clear();
-    console.log("🧹 Screening history cleared");
-  }
-
-  getExecutionStats() {
-    const executions = Array.from(this.screeningHistory.values())
-      .filter((result) => result.executionResult)
-      .map((result) => result.executionResult!);
-
-    const stats = executions.reduce((acc, exec) => {
-      acc[exec.action] = (acc[exec.action] || 0) + 1;
-      return acc;
-    }, {} as Record<string, number>);
-
-    return {
-      totalExecutions: executions.length,
-      breakdown: stats,
-      lastExecution:
-        executions.length > 0
-          ? executions[executions.length - 1].timestamp
-          : null,
-    };
+    this.executionResults.clear();
+    console.log("🧹 History cleared");
   }
 }
