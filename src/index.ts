@@ -17,7 +17,9 @@ console.log("AGENT_ACCOUNT_ID:", process.env.AGENT_ACCOUNT_ID);
 
 // Import services
 import { ProposalScreener } from "./proposalScreener";
-import createScreenerRoutes from "./routes/proposalScreener";
+import createScreenerRoutes from "./routes/screener";
+import createDebugRoutes from "./routes/debug";
+
 import { agent, agentAccountId } from "@neardefi/shade-agent-js";
 
 // Configuration
@@ -34,6 +36,13 @@ const proposalScreener = new ProposalScreener({
   agentAccountId: "ac-sandbox.votron.testnet",
   votingContractId: "shade.ballotbox.testnet",
 });
+
+// TESTING
+const debugInfo = {
+  lastWebSocketMessage: null as string | null,
+  lastEventTime: null as string | null,
+  wsMessageCount: 0,
+};
 
 // WebSocket monitoring
 let eventClient: WebSocket | null = null;
@@ -74,34 +83,36 @@ app.get("/", (c) => {
 
 // Mount routes
 app.route("/api/screener", createScreenerRoutes(proposalScreener));
+app.route(
+  "/api/debug",
+  createDebugRoutes(
+    {
+      eventClient,
+      isConnecting,
+      reconnectAttempts,
+      maxReconnectAttempts,
+      VOTING_CONTRACT_ID,
+    },
+    debugInfo
+  )
+);
+app.route(
+  "/debug",
+  createDebugRoutes(
+    {
+      eventClient,
+      isConnecting,
+      reconnectAttempts,
+      maxReconnectAttempts,
+      VOTING_CONTRACT_ID,
+    },
+    debugInfo
+  )
+);
 app.route("/api/agent", createShadeAgentApiRoutes());
 
-// Debug endpoints
-app.get("/api/debug/websocket-status", (c) => {
-  return c.json({
-    connected: !!eventClient,
-    isConnecting: isConnecting,
-    reconnectAttempts: reconnectAttempts,
-    votingContract: VOTING_CONTRACT_ID,
-    maxReconnectAttempts: maxReconnectAttempts,
-  });
-});
-
-app.get("/debug/env", (c) => {
-  return c.json({
-    nodeEnv: process.env.NODE_ENV,
-    hasAnthropicKey: !!process.env.ANTHROPIC_API_KEY,
-    anthropicKeyLength: process.env.ANTHROPIC_API_KEY?.length || 0,
-    agentAccountId: process.env.AGENT_ACCOUNT_ID,
-    allAnthropicKeys: Object.keys(process.env).filter((k) =>
-      k.toLowerCase().includes("anthropic")
-    ),
-    envKeysCount: Object.keys(process.env).length,
-  });
-});
-
 // Agent status endpoint
-app.get("/api/screener/agent-status", async (c) => {
+app.get("/api/agent-status", async (c) => {
   try {
     let agentRegistered = false;
     let agentInfo = null;
@@ -150,7 +161,7 @@ app.get("/api/screener/agent-status", async (c) => {
 });
 
 // Manual approval endpoint
-app.post("/api/screener/agent-approve", async (c) => {
+app.post("/api/agent-approve", async (c) => {
   try {
     const { proposalId, force } = await c.req.json();
 
@@ -472,12 +483,18 @@ async function startEventStream() {
       try {
         const text = data.toString();
 
+        // Store for debugging
+        debugInfo.lastWebSocketMessage = text;
+
+        console.log("📨 Raw WebSocket message:", text);
+
         if (!text.startsWith("{") && !text.startsWith("[")) {
           console.log("📨 WebSocket message (non-JSON):", text);
           return;
         }
 
         const events = JSON.parse(text);
+        console.log("📨 Parsed events:", JSON.stringify(events, null, 2));
         const eventArray = Array.isArray(events) ? events : [events];
 
         for (const event of eventArray) {

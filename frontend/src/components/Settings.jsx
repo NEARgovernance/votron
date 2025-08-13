@@ -28,9 +28,7 @@ export function Settings() {
 
   const fetchAgentStatus = async () => {
     try {
-      const response = await fetch(
-        `${Constants.API_URL}/api/screener/agent-status`
-      );
+      const response = await fetch(`${Constants.API_URL}/api/agent-status`);
       if (response.ok) {
         const data = await response.json();
         setAgentStatus(data);
@@ -42,9 +40,7 @@ export function Settings() {
 
   const fetchAutoApprovalStats = async () => {
     try {
-      const response = await fetch(
-        `${Constants.API_URL}/api/screener/auto-approval-stats`
-      );
+      const response = await fetch(`${Constants.API_URL}/api/screener/stats`);
       if (response.ok) {
         const data = await response.json();
         setAutoApprovalStats(data);
@@ -56,9 +52,7 @@ export function Settings() {
 
   const fetchExecutionHistory = async () => {
     try {
-      const response = await fetch(
-        `${Constants.API_URL}/api/screener/execution-history`
-      );
+      const response = await fetch(`${Constants.API_URL}/api/screener/history`);
       if (response.ok) {
         const data = await response.json();
         setExecutionHistory(data);
@@ -112,7 +106,7 @@ export function Settings() {
       // Test 2: Agent Contract Status
       try {
         const statusResponse = await fetch(
-          `${Constants.API_URL}/api/screener/agent-status`
+          `${Constants.API_URL}/api/agent-status`
         );
         const statusData = await statusResponse.json();
         results.tests.push({
@@ -158,7 +152,7 @@ export function Settings() {
       // Test 4: Auto-Approval System
       try {
         const statsResponse = await fetch(
-          `${Constants.API_URL}/api/screener/auto-approval-stats`
+          `${Constants.API_URL}/api/screener/stats`
         );
         const statsData = await statsResponse.json();
         results.tests.push({
@@ -181,7 +175,7 @@ export function Settings() {
       // Test 5: Agent Approval Test
       try {
         const approvalResponse = await fetch(
-          `${Constants.API_URL}/api/screener/agent-approve`,
+          `${Constants.API_URL}/api/agent-approve`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -654,7 +648,7 @@ export function Settings() {
                 className="btn btn-outline-success"
                 onClick={() =>
                   window.open(
-                    `${Constants.API_URL}/api/screener/execution-history`,
+                    `${Constants.API_URL}/api/screener/history`,
                     "_blank"
                   )
                 }
@@ -675,7 +669,7 @@ export function Settings() {
                 className="btn btn-outline-secondary"
                 onClick={() =>
                   window.open(
-                    `${Constants.API_URL}/api/screener/auto-approval-stats`,
+                    `${Constants.API_URL}/api/screener/stats`,
                     "_blank"
                   )
                 }

@@ -1,6 +1,6 @@
 import { agent, agentCall } from "@neardefi/shade-agent-js";
 
-interface ScreeningCriteria {
+export interface ScreeningCriteria {
   trustedProposers?: string[];
   blockedProposers?: string[];
   apiKey?: string;
@@ -9,7 +9,7 @@ interface ScreeningCriteria {
   customContractId?: string;
 }
 
-interface ScreeningResult {
+export interface ScreeningResult {
   proposalId: string;
   approved: boolean;
   reasons: string[];
@@ -17,14 +17,24 @@ interface ScreeningResult {
   executionResult?: ExecutionResult;
 }
 
-interface ExecutionResult {
+export interface ExecutionStatus {
+  executed: boolean;
+  executionTxHash?: string;
+  executedAt?: string;
+  executionMethod?: string;
+  success: boolean;
+  executionError?: string;
+  attemptedAt?: string;
+}
+
+export interface ExecutionResult {
   action: "approved" | "failed";
   transactionHash?: string;
   timestamp: string;
   error?: string;
 }
 
-interface ProposalData {
+export interface ProposalData {
   title?: string;
   description?: string;
   proposer_id?: string;
@@ -35,7 +45,7 @@ interface ProposalData {
 export class ProposalScreener {
   private criteria: ScreeningCriteria;
   private screeningHistory: Map<string, ScreeningResult>;
-  private executionResults: Map<string, any>;
+  private executionResults: Map<string, ExecutionStatus>;
 
   public autonomousMode: boolean;
   public agentAccountId?: string;
@@ -130,7 +140,7 @@ export class ProposalScreener {
     }
   }
 
-  private async askAI(
+  public async askAI(
     proposal: ProposalData
   ): Promise<{ approved: boolean; reasons: string[] }> {
     const apiKey = this.criteria.apiKey || process.env.ANTHROPIC_API_KEY;
@@ -326,9 +336,7 @@ Respond ONLY with JSON:
   private async executeViaTEE(proposalId: string): Promise<ExecutionResult> {
     console.log(`🛡️ Executing via TEE for proposal ${proposalId}...`);
 
-    const teeUrl =
-      process.env.API_URL ||
-      "https://e3303d7df5813ffb9c8a5a60abdedba3f304069a-3000.dstack-prod7.phala.network";
+    const teeUrl = process.env.API_URL || "https://localhost:3140";
 
     const response = await fetch(`${teeUrl}/api/screener/execute-transaction`, {
       method: "POST",
@@ -377,9 +385,7 @@ Respond ONLY with JSON:
         });
         return true;
       } else {
-        const teeUrl =
-          process.env.API_URL ||
-          "https://e3303d7df5813ffb9c8a5a60abdedba3f304069a-3000.dstack-prod7.phala.network";
+        const teeUrl = process.env.API_URL || "https://localhost:3140";
         const response = await fetch(`${teeUrl}/`);
         return response.ok;
       }

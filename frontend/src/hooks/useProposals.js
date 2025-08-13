@@ -77,7 +77,7 @@ export function useProposals(contractId) {
       const fetchedProposals = results
         .filter((res) => res.status === "fulfilled")
         .map((res) => res.value)
-        .sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
+        .sort((a, b) => b.id - a.id);
 
       setProposals(fetchedProposals);
     } catch (err) {
