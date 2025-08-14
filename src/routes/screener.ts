@@ -9,7 +9,10 @@ import {
 
 const routes = new Hono();
 
-export default function createScreenerRoutes(screener: ProposalScreener) {
+export default function createScreenerRoutes(
+  screener: ProposalScreener,
+  wsState?: any
+) {
   // Main screening endpoint
   routes.post("/screen", async (c) => {
     try {
@@ -120,14 +123,8 @@ export default function createScreenerRoutes(screener: ProposalScreener) {
       const notApproved = screeningStats.length - approved;
 
       return c.json({
-        autonomousMode: screener.autonomousMode,
-        configured: !!(
-          screener.votingContractId &&
-          (screener.customContractId || screener.agentAccountId)
-        ),
+        configured: !!(screener.votingContractId && screener.agentAccountId),
         agentAccount: screener.agentAccountId,
-        customContract: screener.customContractId,
-        mode: screener.customContractId ? "custom_contract" : "tee_fallback",
         screening: {
           totalScreened: screeningStats.length,
           breakdown: { approved, notApproved },
@@ -146,7 +143,6 @@ export default function createScreenerRoutes(screener: ProposalScreener) {
       });
     } catch (error) {
       return c.json({
-        autonomousMode: screener.autonomousMode,
         configured: false,
         totalScreened: screener.getScreeningHistory().length,
         error: "Could not fetch complete status",
@@ -258,7 +254,6 @@ export default function createScreenerRoutes(screener: ProposalScreener) {
           timestamp: executionResult.timestamp,
           error: executionResult.error,
         },
-        mode: screener.customContractId ? "agent_contract" : "tee_fallback",
         timestamp: new Date().toISOString(),
       });
     } catch (error: any) {
@@ -275,41 +270,6 @@ export default function createScreenerRoutes(screener: ProposalScreener) {
     }
   });
 
-  routes.get("/test-status", (c) => {
-    const screeningHistory = screener.getScreeningHistory();
-    const approved = screeningHistory.filter((r) => r.approved);
-    const approvedUnexecuted = approved.filter(
-      (r) => !screener.isProposalExecuted(r.proposalId)
-    );
-    const executionStats = screener.getExecutionStats();
-
-    return c.json({
-      ready: {
-        aiTesting: true, // Always ready
-        executionTesting: approvedUnexecuted.length > 0,
-      },
-      proposals: {
-        total: screeningHistory.length,
-        approved: approved.length,
-        approvedUnexecuted: approvedUnexecuted.length,
-        executed: executionStats.successful,
-      },
-      availableForExecution: approvedUnexecuted.map((p) => ({
-        proposalId: p.proposalId,
-        approved: p.approved,
-        reasons: p.reasons.slice(0, 2), // First 2 reasons
-        timestamp: p.timestamp,
-      })),
-      agentConfig: {
-        autonomousMode: screener.autonomousMode,
-        agentAccountId: screener.agentAccountId,
-        customContractId: screener.customContractId,
-        mode: screener.customContractId ? "agent_contract" : "tee_fallback",
-      },
-      timestamp: new Date().toISOString(),
-    });
-  });
-
   // Agent information
   routes.get("/agent-info", async (c) => {
     try {
@@ -321,8 +281,6 @@ export default function createScreenerRoutes(screener: ProposalScreener) {
         agentInfo: agentDetails,
         configuredAccountId: screener.agentAccountId,
         votingContract: screener.votingContractId,
-        customContract: screener.customContractId,
-        mode: screener.customContractId ? "custom_contract" : "tee_fallback",
       });
     } catch (error) {
       const errorMessage =
@@ -356,9 +314,9 @@ export default function createScreenerRoutes(screener: ProposalScreener) {
     return c.json({
       autoApproval: autoApprovalStats,
       monitoring: {
-        eventStreamConnected: true, // This is handled in index.ts
-        isConnecting: false,
-        reconnectAttempts: 0,
+        eventStreamConnected: !!wsState?.eventClient,
+        isConnecting: wsState?.isConnecting || false,
+        reconnectAttempts: wsState?.reconnectAttempts || 0,
       },
     });
   });

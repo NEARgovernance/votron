@@ -210,80 +210,142 @@ This initiative will significantly expand NEAR's developer community, reduce onb
     setTestResult(null);
 
     try {
-      console.log("🚀 Testing execution...");
+      console.log(
+        "🚀 Testing real agent contract execution with proposal #36..."
+      );
 
-      const response = await fetch(
-        `${Constants.API_URL}/api/screener/test-execute-approved`,
+      const proposalId = "36";
+      const proposalTitle =
+        "NEAR Developer Education Platform: Comprehensive Tutorial Series";
+
+      console.log(`🎯 Using proposal #${proposalId}: "${proposalTitle}"`);
+
+      // Step 1: Clear backend execution history to reset "already executed" status
+      console.log("🧹 Clearing backend execution history first...");
+      try {
+        const clearResponse = await fetch(
+          `${Constants.API_URL}/api/screener/history`,
+          { method: "DELETE" }
+        );
+        if (clearResponse.ok) {
+          console.log("✅ Backend history cleared successfully");
+        } else {
+          console.log(
+            "⚠️ Could not clear backend history, continuing anyway..."
+          );
+        }
+      } catch (e) {
+        console.log("⚠️ Error clearing history, continuing anyway...", e);
+      }
+
+      // Step 2: Check the ACTUAL proposal status from the voting contract
+      console.log("📊 Checking actual proposal status from voting contract...");
+
+      let actualProposalStatus = "CREATED"; // Default assumption
+
+      // Try to get the real proposal status
+      try {
+        if (typeof proposals !== "undefined" && proposals) {
+          const proposal = proposals.find(
+            (p) => p.id.toString() === proposalId
+          );
+          if (proposal) {
+            actualProposalStatus = proposal.status;
+            console.log(
+              `📋 Found proposal #${proposalId} with status: ${actualProposalStatus}`
+            );
+          }
+        }
+      } catch (e) {
+        console.log(
+          "⚠️ Could not get proposal status from proposals data, assuming CREATED"
+        );
+      }
+
+      // Step 3: Determine execution reason based on ACTUAL status
+      let executionReason = "";
+      if (
+        actualProposalStatus === "CREATED" ||
+        actualProposalStatus === "PENDING"
+      ) {
+        executionReason = `Proposal status is ${actualProposalStatus} - needs execution to become VOTING/ACTIVE`;
+      } else if (
+        actualProposalStatus === "VOTING" ||
+        actualProposalStatus === "ACTIVE"
+      ) {
+        executionReason = `Proposal already ${actualProposalStatus} - testing re-execution`;
+      } else {
+        executionReason = `Status is ${actualProposalStatus} - testing execution`;
+      }
+
+      console.log(`🔍 Execution reason: ${executionReason}`);
+
+      // Step 4: Execute the proposal (should work now that history is cleared)
+      console.log(`🚀 Executing proposal #${proposalId}...`);
+
+      const executionResponse = await fetch(
+        `${Constants.API_URL}/api/screener/execute/${proposalId}`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({}),
+          body: JSON.stringify({ force: true }),
         }
       );
 
-      const result = await response.json();
-      setTestResult(result);
+      const executionResult = await executionResponse.json();
+      console.log("🚀 Agent Contract Execution Result:", executionResult);
 
-      console.log("🚀 Execution Test Result:", result);
+      setTestResult(executionResult);
 
-      if (result.success) {
-        const summary = `✅ Execution Test Complete!
+      if (executionResult.success) {
+        const summary = `✅ Agent Contract Execution Complete!
 
-Proposal ID: ${result.proposalId}
-Execution: ${result.execution.action.toUpperCase()}
-Mode: ${result.mode}
-${
-  result.execution.transactionHash
-    ? `Transaction: ${result.execution.transactionHash.substring(0, 20)}...`
-    : ""
-}`;
+Proposal ID: #${executionResult.proposalId}
+Title: "${proposalTitle}"
+
+🔄 BEFORE: Status was ${actualProposalStatus}
+⚡ EXECUTION: ${executionReason}
+✅ AFTER: Check if status changed to VOTING/ACTIVE
+
+Transaction Hash: ${executionResult.execution.transactionHash}
+Timestamp: ${new Date(executionResult.execution.timestamp).toLocaleTimeString()}
+
+🔗 View on NearBlocks: https://nearblocks.io/txns/${
+          executionResult.execution.transactionHash
+        }
+
+💡 To verify success: Refresh the page and check if proposal #${proposalId} status changed to VOTING/ACTIVE`;
 
         alert(summary);
-      } else {
-        let errorMsg = `❌ Execution Test Failed: ${result.error}`;
-        if (result.suggestion) {
-          errorMsg += `\n\nSuggestion: ${result.suggestion}`;
+
+        // Refresh proposals to see if status changed
+        if (typeof refetchProposals === "function") {
+          console.log("🔄 Refreshing proposals to check status change...");
+          setTimeout(() => refetchProposals(), 1000); // Wait 1 second for blockchain update
         }
+      } else {
+        let errorMsg = `❌ Agent Contract Execution Still Failed: ${executionResult.error}
+
+Current proposal status: ${actualProposalStatus}
+${executionReason}
+
+Even after clearing backend history, the execution failed.
+This suggests a deeper issue with the agent contract or cross-contract call.`;
+
         alert(errorMsg);
       }
     } catch (error) {
-      console.error("Execution test failed:", error);
-      const errorResult = { success: false, error: error.message };
+      console.error("Real execution test failed:", error);
+      const errorResult = {
+        success: false,
+        error: error.message,
+        type: "agent_contract_execution",
+      };
       setTestResult(errorResult);
-      alert(`❌ Test Failed: ${error.message}`);
+
+      alert(`❌ Agent Contract Execution Failed: ${error.message}`);
     } finally {
       setIsLoading(false);
-    }
-  };
-
-  const checkTestStatus = async () => {
-    try {
-      const response = await fetch(
-        `${Constants.API_URL}/api/screener/test-status`
-      );
-      const result = await response.json();
-
-      console.log("🧪 Test Status:", result);
-
-      const summary = `🧪 Test Status Report
-
-AI Testing: ${result.ready.aiTesting ? "✅ Ready" : "❌ Not Ready"}
-Execution Testing: ${
-        result.ready.executionTesting ? "✅ Ready" : "❌ Not Ready"
-      }
-
-Proposals:
-- Total: ${result.proposals.total}
-- Approved: ${result.proposals.approved}
-- Available for Execution: ${result.proposals.approvedUnexecuted}
-- Already Executed: ${result.proposals.executed}
-
-Agent Mode: ${result.agentConfig.mode}`;
-
-      alert(summary);
-    } catch (error) {
-      console.error("Failed to check test status:", error);
-      alert(`❌ Failed to check test status: ${error.message}`);
     }
   };
 
@@ -371,15 +433,6 @@ Agent Mode: ${result.agentConfig.mode}`;
               ) : (
                 <>🚀 Test Approval</>
               )}
-            </button>
-
-            <button
-              className="btn btn-outline-info btn-sm"
-              style={{ minWidth: "140px" }}
-              onClick={checkTestStatus}
-              disabled={isStatusLoading}
-            >
-              🧪 Test Status
             </button>
           </div>
         </div>

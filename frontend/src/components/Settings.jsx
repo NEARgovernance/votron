@@ -520,12 +520,6 @@ export function Settings() {
                               </span>
                             </td>
                             <td>
-                              <small>
-                                {execution.executionMethod?.replace("_", " ") ||
-                                  "Unknown"}
-                              </small>
-                            </td>
-                            <td>
                               {execution.executionTxHash ? (
                                 <a
                                   href={`https://explorer.testnet.near.org/transactions/${execution.executionTxHash}`}

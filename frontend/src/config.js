@@ -3,4 +3,4 @@
 
 // For production...
 export const API_URL =
-  "https://4f5f717bc10bd7d52b986c07eb5f64a2e111fe90-3000.dstack-prod7.phala.network";
+  "https://becf127abc1f1bac8b458741c45e666319b5d45e-3000.dstack-prod7.phala.network";

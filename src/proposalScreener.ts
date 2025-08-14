@@ -1,4 +1,9 @@
 import { agent, agentCall } from "@neardefi/shade-agent-js";
+import {
+  queuedAgentCall,
+  queuedAgent,
+  queuedAgentAccountId,
+} from "./agentQueue";
 
 export interface ScreeningCriteria {
   trustedProposers?: string[];
@@ -6,7 +11,6 @@ export interface ScreeningCriteria {
   apiKey?: string;
   agentAccountId?: string;
   votingContractId?: string;
-  customContractId?: string;
 }
 
 export interface ScreeningResult {
@@ -21,7 +25,6 @@ export interface ExecutionStatus {
   executed: boolean;
   executionTxHash?: string;
   executedAt?: string;
-  executionMethod?: string;
   success: boolean;
   executionError?: string;
   attemptedAt?: string;
@@ -47,10 +50,8 @@ export class ProposalScreener {
   private screeningHistory: Map<string, ScreeningResult>;
   private executionResults: Map<string, ExecutionStatus>;
 
-  public autonomousMode: boolean;
   public agentAccountId?: string;
   public votingContractId?: string;
-  public customContractId?: string;
 
   constructor(initialCriteria: ScreeningCriteria = {}) {
     this.criteria = {
@@ -65,9 +66,6 @@ export class ProposalScreener {
       initialCriteria.votingContractId ||
       process.env.VOTING_CONTRACT_ID ||
       "shade.ballotbox.testnet";
-    this.customContractId =
-      initialCriteria.customContractId || process.env.CUSTOM_CONTRACT_ID;
-    this.autonomousMode = !!(this.agentAccountId && this.votingContractId);
     this.screeningHistory = new Map();
     this.executionResults = new Map();
 
@@ -76,11 +74,6 @@ export class ProposalScreener {
         this.criteria.apiKey ? "✅" : "❌"
       })`
     );
-    if (this.autonomousMode) {
-      console.log("🤖 AUTONOMOUS DAO GOVERNANCE ACTIVE");
-      console.log(`🔑 Agent account: ${this.agentAccountId}`);
-      console.log(`📋 Voting contract: ${this.votingContractId}`);
-    }
   }
 
   updateCriteria(newCriteria: Partial<ScreeningCriteria>) {
@@ -244,7 +237,7 @@ Respond ONLY with JSON:
   private async executeIfAutonomous(
     result: ScreeningResult
   ): Promise<ScreeningResult> {
-    if (this.autonomousMode && result.approved) {
+    if (result.approved) {
       try {
         console.log(
           `🤖 Executing autonomous approval for proposal ${result.proposalId}`
@@ -275,16 +268,13 @@ Respond ONLY with JSON:
     }
 
     try {
-      const result = this.customContractId
-        ? await this.executeViaAgentContract(proposalId)
-        : await this.executeViaTEE(proposalId);
+      const result = await this.executeViaAgentContract(proposalId);
 
       // Store execution result
       this.executionResults.set(proposalId, {
         executed: true,
         executionTxHash: result.transactionHash,
         executedAt: new Date().toISOString(),
-        executionMethod: this.customContractId ? "agent_contract" : "tee",
         success: true,
       });
 
@@ -295,9 +285,6 @@ Respond ONLY with JSON:
       this.executionResults.set(proposalId, {
         executed: false,
         executionError: error.message,
-        executionMethod: this.customContractId
-          ? "agent_contract_failed"
-          : "tee_failed",
         success: false,
         attemptedAt: new Date().toISOString(),
       });
@@ -314,81 +301,81 @@ Respond ONLY with JSON:
     proposalId: string
   ): Promise<ExecutionResult> {
     console.log(
-      `🤖 Executing via agent contract for proposal ${proposalId}...`
+      `🤖 Executing ONLY approve_proposal for proposal ${proposalId} via QUEUE...`
     );
 
-    const result = await agentCall({
-      methodName: "approve_proposal",
-      args: {
-        proposal_id: parseInt(proposalId),
-        voting_start_time_sec: null,
-      },
-    });
+    try {
+      const result = await queuedAgentCall({
+        methodName: "approve_proposal",
+        args: {
+          proposal_id: parseInt(proposalId),
+          voting_start_time_sec: null,
+        },
+      });
 
-    return {
-      action: "approved",
-      transactionHash:
-        result.transaction?.hash || result.txHash || `agent_${Date.now()}`,
-      timestamp: new Date().toISOString(),
-    };
-  }
-
-  private async executeViaTEE(proposalId: string): Promise<ExecutionResult> {
-    console.log(`🛡️ Executing via TEE for proposal ${proposalId}...`);
-
-    const teeUrl = process.env.API_URL || "https://localhost:3140";
-
-    const response = await fetch(`${teeUrl}/api/screener/execute-transaction`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        receiverId: this.votingContractId!,
-        actions: [
-          {
-            type: "FunctionCall",
-            params: {
-              methodName: "approve_proposal",
-              args: {
-                proposal_id: parseInt(proposalId),
-                voting_start_time_sec: null,
-              },
-              gas: "50000000000000",
-              deposit: "1",
-            },
-          },
-        ],
-      }),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(
-        `TEE transaction failed: ${response.status} - ${errorText}`
+      console.log(
+        `✅ approve_proposal result:`,
+        JSON.stringify(result, null, 2)
       );
-    }
+      console.log(`🔍 Result keys:`, Object.keys(result || {}));
+      console.log(`🔍 Transaction hash checks:`, {
+        "result.transaction?.hash": result.transaction?.hash,
+        "result.txHash": result.txHash,
+        "result.receipt?.transaction_hash": result.receipt?.transaction_hash,
+        "result.receipt?.id": result.receipt?.id,
+        "result.hash": result.hash,
+        "result.transaction_outcome?.id": result.transaction_outcome?.id,
+      });
 
-    const result = await response.json();
-    return {
-      action: "approved",
-      transactionHash: result.transactionHash || `tee_${Date.now()}`,
-      timestamp: new Date().toISOString(),
-    };
+      if (result.transaction?.hash || result.txHash) {
+        console.log(
+          `🎉 SUCCESS! Real transaction hash: ${
+            result.transaction?.hash || result.txHash
+          }`
+        );
+        return {
+          action: "approved",
+          transactionHash: result.transaction?.hash || result.txHash,
+          timestamp: new Date().toISOString(),
+        };
+      } else if (result.error) {
+        throw new Error(`Contract error: ${result.error}`);
+      } else {
+        const fallbackHash =
+          result.receipt?.transaction_hash ||
+          result.receipt?.id ||
+          result.hash ||
+          result.transaction_outcome?.id ||
+          `success_${Date.now()}`;
+
+        console.log(`⚠️ Using fallback transaction hash: ${fallbackHash}`);
+        console.log(
+          `🔍 Full result structure:`,
+          JSON.stringify(result, null, 2)
+        );
+
+        return {
+          action: "approved",
+          transactionHash: fallbackHash,
+          timestamp: new Date().toISOString(),
+        };
+      }
+    } catch (error: any) {
+      console.error(`❌ approve_proposal failed:`, error);
+      throw error;
+    }
   }
 
   async testContractConnection(): Promise<boolean> {
     try {
-      if (this.customContractId) {
-        await agent("view", {
-          contractId: this.agentAccountId!,
-          methodName: "get_agent",
-          args: { account_id: this.agentAccountId },
-        });
-        return true;
-      } else {
-        const teeUrl = process.env.API_URL || "https://localhost:3140";
-        const response = await fetch(`${teeUrl}/`);
-        return response.ok;
-      }
+      const accountInfo = await queuedAgentAccountId();
+
+      await queuedAgent("view", {
+        contractId: "ac-sandbox.votron.testnet",
+        methodName: "get_agent",
+        args: { account_id: accountInfo.accountId },
+      });
+      return true;
     } catch (error) {
       console.error("Connection test failed:", error);
       return false;
@@ -408,6 +395,16 @@ Respond ONLY with JSON:
     };
 
     this.screeningHistory.set(proposalId, result);
+
+    if (this.screeningHistory.size > 1000) {
+      const entries = Array.from(this.screeningHistory.entries());
+      const oldest = entries.sort(
+        (a, b) =>
+          new Date(a[1].timestamp).getTime() -
+          new Date(b[1].timestamp).getTime()
+      )[0];
+      this.screeningHistory.delete(oldest[0]);
+    }
 
     const emoji = approved ? "✅" : "⏸️";
     const decisionText = approved ? "APPROVED" : "NOT APPROVED";

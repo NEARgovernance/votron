@@ -3,6 +3,11 @@ import { serve } from "@hono/node-server";
 import { cors } from "hono/cors";
 import dotenv from "dotenv";
 import WebSocket from "ws";
+import {
+  queuedAgent,
+  queuedAgentAccountId,
+  getQueueStatus,
+} from "./agentQueue";
 
 try {
   dotenv.config({ path: ".env.development.local" });
@@ -33,8 +38,8 @@ const proposalScreener = new ProposalScreener({
   trustedProposers: [],
   blockedProposers: [],
   apiKey: process.env.ANTHROPIC_API_KEY,
-  agentAccountId: "ac-sandbox.votron.testnet",
-  votingContractId: "shade.ballotbox.testnet",
+  agentAccountId: process.env.AGENT_ACCOUNT_ID,
+  votingContractId: process.env.VOTING_CONTRACT_ID,
 });
 
 // TESTING
@@ -73,7 +78,6 @@ app.get("/", (c) => {
       lastScreened: stats.lastScreened,
     },
     execution: {
-      autonomousMode: proposalScreener.autonomousMode,
       totalExecutions: execStats.total,
       successful: execStats.successful,
       failed: execStats.failed,
@@ -81,8 +85,38 @@ app.get("/", (c) => {
   });
 });
 
+app.get("/api/test", (c) => {
+  console.log("🧪 Test API route hit!");
+  return c.json({
+    message: "API routing works!",
+    timestamp: new Date().toISOString(),
+    screenerTest: {
+      hasScreener: !!proposalScreener,
+      hasGetStats: typeof proposalScreener.getScreeningStats === "function",
+      hasAgentAccount: !!proposalScreener.agentAccountId,
+    },
+  });
+});
+console.log("✅ Test route ready");
+
 // Mount routes
-app.route("/api/screener", createScreenerRoutes(proposalScreener));
+app.route(
+  "/api/screener",
+  createScreenerRoutes(proposalScreener, {
+    get eventClient() {
+      return eventClient;
+    },
+    get isConnecting() {
+      return isConnecting;
+    },
+    get reconnectAttempts() {
+      return reconnectAttempts;
+    },
+    maxReconnectAttempts,
+    VOTING_CONTRACT_ID,
+  })
+);
+
 app.route(
   "/api/debug",
   createDebugRoutes(
@@ -114,56 +148,105 @@ app.route("/api/agent", createShadeAgentApiRoutes());
 // Agent status endpoint
 app.get("/api/agent-status", async (c) => {
   try {
-    let agentRegistered = false;
-    let agentInfo = null;
-    let contractBalance = null;
+    let agentRegistered: boolean = false;
+    let agentInfo: any = null;
+    let contractBalance: any = null;
+    let connectionError: string | null = null;
+
+    console.log(`🔍 Starting agent status check with queue...`);
+
+    let accountInfo: { accountId: string };
+    let agentAccount: string;
 
     try {
-      const agentCheckResult = await agent("view", {
-        contractId: process.env.AGENT_ACCOUNT_ID,
+      accountInfo = await queuedAgentAccountId();
+      agentAccount = accountInfo.accountId;
+      console.log(`✅ Got agent account: ${agentAccount}`);
+    } catch (error: any) {
+      console.warn("Could not get agent account:", error.message);
+      connectionError = error.message;
+      agentAccount = "unknown";
+    }
+
+    const agentContract: string =
+      process.env.AGENT_ACCOUNT_ID || "ac-sandbox.votron.testnet";
+
+    try {
+      const agentCheckResult = await queuedAgent("view", {
+        contractId: agentContract,
         methodName: "get_agent",
-        args: { account_id: process.env.AGENT_ACCOUNT_ID },
+        args: { account_id: agentAccount },
       });
       agentRegistered = true;
       agentInfo = agentCheckResult;
+      console.log(`✅ Agent registration verified`);
     } catch (error: any) {
       console.warn("Agent not found:", error.message);
+      connectionError = error.message;
     }
 
     try {
-      const balanceResult = await agent("view", {
-        contractId: process.env.AGENT_ACCOUNT_ID,
+      const balanceResult = await queuedAgent("view", {
+        contractId: agentContract,
         methodName: "get_contract_balance",
         args: {},
       });
       contractBalance = balanceResult;
+      console.log(`✅ Got contract balance`);
     } catch (error: any) {
       console.warn("Could not fetch balance:", error.message);
+      connectionError = error.message;
     }
+
+    const queueStatus = getQueueStatus();
 
     return c.json({
       agentContract: {
-        contractId: process.env.AGENT_ACCOUNT_ID,
+        contractId: agentContract,
+        agentAccountId: agentAccount,
         agentRegistered,
         agentInfo,
         contractBalance,
         votingContract: VOTING_CONTRACT_ID,
+        connectionError,
       },
       autoApproval: {
         enabled: agentRegistered,
         method: "agent_contract",
       },
+      queueStatus,
     });
   } catch (error: any) {
     console.error("❌ Agent status check failed:", error);
-    return c.json({ error: error.message }, 500);
+    return c.json(
+      {
+        error: error.message,
+        agentContract: {
+          contractId: "ac-sandbox.votron.testnet",
+          connectionError: error.message,
+        },
+      },
+      200
+    );
   }
+});
+
+app.get("/api/queue-status", (c) => {
+  const status = getQueueStatus();
+  return c.json({
+    queue: status,
+    timestamp: new Date().toISOString(),
+    message: status.isProcessing
+      ? "Queue is processing requests"
+      : "Queue is idle",
+  });
 });
 
 // Manual approval endpoint
 app.post("/api/agent-approve", async (c) => {
   try {
-    const { proposalId, force } = await c.req.json();
+    const body = await c.req.json().catch(() => ({}));
+    const { proposalId, force } = body;
 
     if (!proposalId) {
       return c.json({ error: "proposalId required" }, 400);
@@ -349,7 +432,7 @@ async function handleNewProposal(proposalId: string, eventDetails: any) {
       }
     }
 
-    // Screen the proposal (with auto-execution if enabled)
+    // Screen the proposal
     const screeningResult = await proposalScreener.screenProposal(proposalId, {
       title,
       description,
@@ -465,6 +548,7 @@ async function startEventStream() {
 
     eventClient.on("open", () => {
       console.log("✅ WebSocket connected");
+
       const contractFilter = {
         And: [
           { path: "event_standard", operator: { Equals: "venear" } },
@@ -485,6 +569,8 @@ async function startEventStream() {
 
         // Store for debugging
         debugInfo.lastWebSocketMessage = text;
+        debugInfo.lastEventTime = new Date().toISOString();
+        debugInfo.wsMessageCount++;
 
         console.log("📨 Raw WebSocket message:", text);
 
@@ -530,23 +616,18 @@ async function startEventStream() {
     });
 
     eventClient.on("close", () => {
-      console.log("🔌 WebSocket closed. Reconnecting...");
+      console.log("🔌 WebSocket closed");
       eventClient = null;
+      isConnecting = false;
 
       if (reconnectAttempts < maxReconnectAttempts) {
-        const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
         reconnectAttempts++;
-
-        setTimeout(() => {
-          console.log(
-            `🔄 Retry attempt ${reconnectAttempts}/${maxReconnectAttempts} in ${delay}ms`
-          );
-          isConnecting = false;
-          startEventStream();
-        }, delay);
+        console.log(
+          `🔄 Retry attempt ${reconnectAttempts}/${maxReconnectAttempts}`
+        );
+        startEventStream();
       } else {
         console.error("❌ Max reconnection attempts reached");
-        isConnecting = false;
       }
     });
 
@@ -556,6 +637,7 @@ async function startEventStream() {
         eventClient.close();
         eventClient = null;
       }
+      isConnecting = false;
     });
   } catch (err: any) {
     console.error("❌ Failed to create WebSocket:", err);
