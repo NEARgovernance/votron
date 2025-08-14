@@ -9,10 +9,8 @@ export function Home({ accountId }) {
   const [agentStatus, setAgentStatus] = useState(null);
   const [executionHistory, setExecutionHistory] = useState([]);
   const [stats, setStats] = useState(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [isExecutionLoading, setIsExecutionLoading] = useState(false);
-  const [isStatusLoading, setIsStatusLoading] = useState(false);
-  const [testLoading, setTestLoading] = useState(false);
+  const [isDeciding, setIsDeciding] = useState(false);
+  const [isExecuting, setIsExecuting] = useState(false);
   const [testResult, setTestResult] = useState(null);
 
   // Status
@@ -158,7 +156,7 @@ This initiative will significantly expand NEAR's developer community, reduce onb
   };
 
   const testScreening = async () => {
-    setIsLoading(true);
+    setIsDeciding(true);
     setTestResult(null);
 
     try {
@@ -201,22 +199,36 @@ This initiative will significantly expand NEAR's developer community, reduce onb
       setTestResult(errorResult);
       alert(`❌ Test Failed: ${error.message}`);
     } finally {
-      setIsLoading(false);
+      setIsDeciding(false);
     }
   };
 
   const testExecution = async () => {
-    setIsLoading(true);
+    setIsExecuting(true);
     setTestResult(null);
 
     try {
-      console.log(
-        "🚀 Testing real agent contract execution with proposal #36..."
+      // Get latest proposal ID dynamically
+      const proposalsResponse = await fetch(
+        `${Constants.API_URL}/api/proposals/shade.ballotbox.testnet`
+      );
+      const proposalsData = await proposalsResponse.json();
+
+      if (!proposalsData.proposals || proposalsData.proposals.length === 0) {
+        throw new Error("No proposals found");
+      }
+
+      // Get the latest proposal (highest ID)
+      const latestProposal = proposalsData.proposals.reduce((latest, current) =>
+        current.id > latest.id ? current : latest
       );
 
-      const proposalId = "36";
-      const proposalTitle =
-        "NEAR Developer Education Platform: Comprehensive Tutorial Series";
+      const proposalId = latestProposal.id.toString();
+      const proposalTitle = latestProposal.title;
+
+      console.log(
+        `🚀 Testing execution with latest proposal #${proposalId}: "${proposalTitle}"`
+      );
 
       console.log(`🎯 Using proposal #${proposalId}: "${proposalTitle}"`);
 
@@ -241,26 +253,10 @@ This initiative will significantly expand NEAR's developer community, reduce onb
       // Step 2: Check the ACTUAL proposal status from the voting contract
       console.log("📊 Checking actual proposal status from voting contract...");
 
-      let actualProposalStatus = "CREATED"; // Default assumption
-
-      // Try to get the real proposal status
-      try {
-        if (typeof proposals !== "undefined" && proposals) {
-          const proposal = proposals.find(
-            (p) => p.id.toString() === proposalId
-          );
-          if (proposal) {
-            actualProposalStatus = proposal.status;
-            console.log(
-              `📋 Found proposal #${proposalId} with status: ${actualProposalStatus}`
-            );
-          }
-        }
-      } catch (e) {
-        console.log(
-          "⚠️ Could not get proposal status from proposals data, assuming CREATED"
-        );
-      }
+      let actualProposalStatus = latestProposal.status || "Created";
+      console.log(
+        `📋 Found proposal #${proposalId} with status: ${actualProposalStatus}`
+      );
 
       // Step 3: Determine execution reason based on ACTUAL status
       let executionReason = "";
@@ -345,7 +341,7 @@ This suggests a deeper issue with the agent contract or cross-contract call.`;
 
       alert(`❌ Agent Contract Execution Failed: ${error.message}`);
     } finally {
-      setIsLoading(false);
+      setIsExecuting(false);
     }
   };
 
@@ -394,44 +390,44 @@ This suggests a deeper issue with the agent contract or cross-contract call.`;
 
           {/* Buttons for Testing */}
           <div className="d-flex gap-2 flex-wrap">
-            <Connect accountId={accountId} />
+            {/* <Connect accountId={accountId} />
             <button
               className="btn btn-success btn-sm"
               style={{ minWidth: "140px" }}
               onClick={createTestProposal}
-              disabled={testLoading || !accountId}
+              disabled={!accountId}
               title={!accountId ? "Sign in required" : "Create a proposal"}
             >
-              {testLoading ? "🔄 Creating..." : "📝 Create Proposal"}
-            </button>
+              📝 Create Proposal
+            </button> */}
             <button
               className="btn btn-outline-primary btn-sm"
               style={{ minWidth: "140px" }}
               onClick={testScreening}
-              disabled={isLoading}
+              disabled={isDeciding}
             >
-              {isLoading ? (
+              {isDeciding ? (
                 <>
                   <span className="spinner-border spinner-border-sm me-2"></span>
                   Testing...
                 </>
               ) : (
-                <>🤖 Test Decision</>
+                <>Test Decision</>
               )}
             </button>
             <button
-              className="btn btn-outline-success btn-sm"
+              className="btn btn-outline-primary btn-sm"
               style={{ minWidth: "140px" }}
               onClick={testExecution}
-              disabled={isExecutionLoading}
+              disabled={isExecuting}
             >
-              {isExecutionLoading ? (
+              {isExecuting ? (
                 <>
                   <span className="spinner-border spinner-border-sm me-2"></span>
                   Executing...
                 </>
               ) : (
-                <>🚀 Test Approval</>
+                <> Test Approval</>
               )}
             </button>
           </div>
@@ -500,7 +496,6 @@ This suggests a deeper issue with the agent contract or cross-contract call.`;
 
         {/* Workflow Tracking */}
         <div className="mb-5">
-          <h3>Shade Agent Workflow</h3>
           <Status />
         </div>
 

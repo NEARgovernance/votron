@@ -385,24 +385,42 @@ export function Status() {
 
               // Step 4: Check execution
               if (proposalStatus.approved && proposalStatus.executed) {
+                // COMPLETE: Proposal approved AND executed
                 updateStep(4, "completed", new Date(), {
                   action: "Agent contract executed approval",
                   transactionHash:
                     proposalStatus.executionResult?.executionTxHash,
                 });
-              } else if (proposalStatus.approved) {
+
+                // Stop polling - workflow complete!
+                console.log(
+                  `✅ WORKFLOW COMPLETE: Proposal ${proposalId} executed`
+                );
+                clearInterval(pollingIntervalRef.current);
+                pollingIntervalRef.current = null;
+              } else if (proposalStatus.approved && !proposalStatus.executed) {
+                // CONTINUE: Proposal approved but not yet executed
                 updateStep(4, "active", new Date(), {
                   action: "Waiting for agent contract execution...",
                 });
+
+                // Keep polling for execution
+                console.log(
+                  `🔄 CONTINUE POLLING: Waiting for execution of proposal ${proposalId}`
+                );
               } else {
+                // SKIP: Proposal not approved
                 updateStep(4, "skipped", new Date(), {
                   reason: "Proposal not approved by AI",
                 });
-              }
 
-              // Stop polling
-              clearInterval(pollingIntervalRef.current);
-              pollingIntervalRef.current = null;
+                // Stop polling - workflow complete (but skipped execution)
+                console.log(
+                  `⏩ WORKFLOW COMPLETE: Proposal ${proposalId} not approved`
+                );
+                clearInterval(pollingIntervalRef.current);
+                pollingIntervalRef.current = null;
+              }
             } else {
               console.log(`⏳ Proposal ${proposalId} not yet screened`);
             }
@@ -477,21 +495,6 @@ export function Status() {
     }
   };
 
-  const getStepIcon = (step) => {
-    switch (step.status) {
-      case "completed":
-        return "✅";
-      case "active":
-        return "🔄";
-      case "skipped":
-        return "⏩";
-      case "error":
-        return "❌";
-      default:
-        return "⏳";
-    }
-  };
-
   const getStepColor = (step) => {
     switch (step.status) {
       case "completed":
@@ -519,23 +522,23 @@ export function Status() {
 
   return (
     <>
-      <div className="d-flex justify-content-between align-items-center mb-4">
-        <div className="d-flex gap-2">
-          <button
+      <div className="d-flex justify-content-between align-items-center mb-1">
+        {/* <button
             className="btn btn-outline-secondary btn-sm"
             onClick={manualTriggerFromCache}
             title="Process cached WebSocket message"
           >
             Check Cache
-          </button>
-          <button
-            className="btn btn-outline-secondary btn-sm"
-            onClick={resetWorkflow}
-            title="Reset workflow tracking"
-          >
-            🔄 Reset
-          </button>
-        </div>
+          </button> */}
+        <h3>Shade Agent Workflow</h3>
+
+        <button
+          className="btn btn-outline-secondary btn-sm"
+          onClick={resetWorkflow}
+          title="Reset workflow tracking"
+        >
+          Reset
+        </button>
       </div>
       <div style={cardStyle} className="bg-white">
         <div style={cardBodyStyle}>
@@ -590,7 +593,7 @@ export function Status() {
                   <div>
                     <div className="d-flex justify-content-between align-items-center">
                       <span className={`fw-semibold ${getStepColor(step)}`}>
-                        {getStepIcon(step)} Step {step.id}: {step.name}
+                        Step {step.id}: {step.name}
                       </span>
                       {step.timestamp && (
                         <small className="text-muted">
