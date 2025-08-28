@@ -177,12 +177,23 @@ app.get("/api/agent-status", async (c) => {
         methodName: "get_agent",
         args: { account_id: agentAccount },
       });
-      agentRegistered = true;
-      agentInfo = agentCheckResult;
-      console.log(`✅ Agent registration verified`);
+
+      // Check if the result contains an error
+      if (agentCheckResult?.error) {
+        agentRegistered = false;
+        agentInfo = agentCheckResult;
+        connectionError = agentCheckResult.error;
+        console.warn("❌ Agent NOT registered:", agentCheckResult.error);
+      } else {
+        agentRegistered = true;
+        agentInfo = agentCheckResult;
+        console.log(`✅ Agent registration verified`);
+      }
     } catch (error: any) {
-      console.warn("Agent not found:", error.message);
+      agentRegistered = false;
+      agentInfo = { error: error.message };
       connectionError = error.message;
+      console.warn("❌ Agent registration check failed:", error.message);
     }
 
     try {

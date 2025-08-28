@@ -8,5 +8,5 @@ export const Constants = {
 
   // For production...
   API_URL:
-    "https://becf127abc1f1bac8b458741c45e666319b5d45e-3000.dstack-prod7.phala.network",
+    "https://cdfac6870932559754412f5571b45818c26f93da-3000.dstack-prod8.phala.network",
 };

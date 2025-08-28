@@ -25,7 +25,7 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
     platform: linux/amd64 # Explicitly set for TDX
     # shade-agent-app-image
-    image: jwaup/votron@sha256:1487e89448e0b8f31d4c3035a7fe5bf4c9dd75ca4ff21604003e9d1fbdd28f4a
+    image: jwaup/votron@sha256:2a2f4704345359172f31e992188c60c2cbff4c2151dceeabccf472bad8031243
     container_name: shade-agent-app
     ports:
       - "3000:3000"
